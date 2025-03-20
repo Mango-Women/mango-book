@@ -15,7 +15,7 @@
             overflow-y: auto;
             margin: 0;
             padding: 2vw;
-            font-size: 14px; /* Smaller, sober font */
+            font-size: 14px;
         }
         body::before {
             content: '';
@@ -48,7 +48,7 @@
             color: #fff;
             font-family: 'Roboto', sans-serif;
             box-sizing: border-box;
-            font-size: 12px; /* Smaller font */
+            font-size: 12px;
         }
         textarea {
             resize: vertical;
@@ -60,7 +60,7 @@
             cursor: pointer;
             transition: all 0.2s ease;
             padding: 0.8vw 1.5vw;
-            font-size: 12px; /* Smaller font */
+            font-size: 12px;
         }
         button:hover {
             background: linear-gradient(45deg, #3A0066, #FFC107, #E63900);
@@ -73,7 +73,7 @@
             padding-bottom: 2vw;
             border-bottom: 1px solid rgba(255, 255, 255, 0.4);
             position: relative;
-            padding-top: 15vw; /* Shift content down */
+            padding-top: 15vw;
         }
         .profile-dp {
             width: clamp(50px, 12vw, 80px);
@@ -82,14 +82,14 @@
             object-fit: cover;
             object-position: center;
             position: absolute;
-            top: 2vw; /* Moved down */
+            top: 2vw;
             left: 50%;
             transform: translateX(-50%);
             border: 2px solid rgba(255, 255, 255, 0.6);
         }
         #profileUsername {
-            font-family: 'Sacramento', cursive; /* Attractive font */
-            font-size: 24px; /* Slightly smaller but elegant */
+            font-family: 'Sacramento', cursive;
+            font-size: 24px;
         }
         .call-buttons {
             text-align: center;
@@ -124,7 +124,7 @@
             min-width: 25px;
         }
         .timestamp {
-            font-size: 10px; /* Smaller */
+            font-size: 10px;
             color: #ccc;
         }
         .feed {
@@ -164,7 +164,7 @@
         }
         #localVideo, #remoteVideo {
             width: 100%;
-            max-width: 250px; /* Smaller for mobile */
+            max-width: 250px;
             margin: 10px;
             border-radius: 8px;
             background: rgba(75, 0, 130, 0.3);
@@ -250,7 +250,6 @@
         const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
         let targetUserId;
 
-        // IST time formatting
         function formatIST(date) {
             return new Date(date).toLocaleString('en-US', {
                 timeZone: 'Asia/Kolkata',
@@ -277,10 +276,10 @@
                     loadProfile(loggedInUser);
                     loadFeed();
                     setupCallButtons(loggedInUser);
+                    subscribeToCalls(loggedInUser); // Move subscription here
                 }
             }
             subscribeToUpdates();
-            subscribeToCalls();
         });
 
         async function loadProfile(user) {
@@ -412,6 +411,7 @@
                 loadProfile(user);
                 loadFeed();
                 setupCallButtons(user);
+                subscribeToCalls(user); // Subscribe after login
             } else {
                 alert('Invalid credentials. Use mango1 or mango2 with password mango1726.');
             }
@@ -422,6 +422,8 @@
             sessionStorage.removeItem('justLoggedIn');
             document.getElementById('mainContainer').style.display = 'none';
             document.getElementById('loginContainer').style.display = 'block';
+            if (peerConnection) peerConnection.close();
+            if (localStream) localStream.getTracks().forEach(track => track.stop());
         });
 
         document.getElementById('editProfileBtn').addEventListener('click', () => {
@@ -565,17 +567,26 @@
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video });
                 document.getElementById('localVideo').srcObject = localStream;
+                return true;
             } catch (error) {
                 console.error('Media error:', error.message);
-                alert('Couldn’t access camera/microphone: ' + error.message);
+                if (error.name === 'NotFoundError') {
+                    alert('No camera or microphone found. Connect a device to make calls.');
+                } else if (error.name === 'NotAllowedError') {
+                    alert('Permission denied for camera/microphone. Please allow access.');
+                } else {
+                    alert('Error accessing camera/microphone: ' + error.message);
+                }
+                return false;
             }
         }
 
         async function callUser(isVideo = false) {
             const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-            await startMedia(isVideo);
-            peerConnection = new RTCPeerConnection(config);
+            const mediaSuccess = await startMedia(isVideo);
+            if (!mediaSuccess) return;
 
+            peerConnection = new RTCPeerConnection(config);
             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
             document.getElementById('remoteVideo').srcObject = new MediaStream();
             peerConnection.ontrack = (event) => {
@@ -609,8 +620,11 @@
             document.getElementById('callModal').style.display = 'block';
         }
 
-        function subscribeToCalls() {
-            const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+        function subscribeToCalls(loggedInUser) {
+            if (!loggedInUser) {
+                console.error('No logged-in user for call subscription');
+                return;
+            }
             supabase
                 .channel('calls-channel')
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${loggedInUser.id}` }, async (payload) => {
@@ -624,7 +638,9 @@
                         document.getElementById('callModal').style.display = 'block';
 
                         document.getElementById('acceptCall').onclick = async () => {
-                            await startMedia(true);
+                            const mediaSuccess = await startMedia(true);
+                            if (!mediaSuccess) return;
+
                             peerConnection = new RTCPeerConnection(config);
                             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
                             document.getElementById('remoteVideo').srcObject = new MediaStream();
@@ -669,7 +685,7 @@
                         await peerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(data)));
                     }
                 })
-                .subscribe();
+                .subscribe((status) => console.log('Call subscription status:', status));
         }
 
         function endCall() {
@@ -681,6 +697,8 @@
             document.getElementById('endCall').style.display = 'none';
             document.getElementById('localVideo').srcObject = null;
             document.getElementById('remoteVideo').srcObject = null;
+            peerConnection = null;
+            localStream = null;
         }
 
         document.getElementById('callBtn').addEventListener('click', () => callUser(false));
