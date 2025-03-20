@@ -3,18 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mangoes Book</title>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Sacramento&display=swap" rel="stylesheet">
+    <title>Mango Social</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Sacramento&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-        <style>
-    body {
+    <style>
+        body {
             background: linear-gradient(45deg, #1a0033, #330066, #4d0099);
             min-height: 100vh;
-            font-family: 'Orbitron', sans-serif;
+            font-family: 'Roboto', sans-serif;
             color: #fff;
             overflow-y: auto;
             margin: 0;
             padding: 2vw;
+            font-size: 14px; /* Smaller, sober font */
         }
         body::before {
             content: '';
@@ -36,29 +37,30 @@
             border: 1px solid rgba(255, 255, 255, 0.3);
             box-shadow: 0 0 40px rgba(255, 153, 255, 0.4);
             margin: 0 auto;
-        } 
+        }
         input, textarea {
             width: 100%;
             margin: 1vw 0;
-            padding: 1.5vw;
+            padding: 1vw;
             border-radius: 8px;
             border: 1px solid rgba(255, 215, 0, 0.4);
             background: linear-gradient(45deg, rgba(75, 0, 130, 0.3), rgba(255, 215, 0, 0.2), rgba(255, 69, 0, 0.3));
             color: #fff;
-            font-family: 'Orbitron', sans-serif;
+            font-family: 'Roboto', sans-serif;
             box-sizing: border-box;
-            font-size: clamp(12px, 2vw, 16px);
+            font-size: 12px; /* Smaller font */
         }
         textarea {
             resize: vertical;
-            min-height: 10vw;
+            min-height: 8vw;
         }
         button {
             background: linear-gradient(45deg, #4B0082, #FFD700, #FF4500);
             border: none;
             cursor: pointer;
             transition: all 0.2s ease;
-            padding: 1vw 2vw;
+            padding: 0.8vw 1.5vw;
+            font-size: 12px; /* Smaller font */
         }
         button:hover {
             background: linear-gradient(45deg, #3A0066, #FFC107, #E63900);
@@ -71,22 +73,37 @@
             padding-bottom: 2vw;
             border-bottom: 1px solid rgba(255, 255, 255, 0.4);
             position: relative;
+            padding-top: 15vw; /* Shift content down */
         }
         .profile-dp {
-            width: clamp(60px, 15vw, 100px);
-            height: clamp(60px, 15vw, 100px);
+            width: clamp(50px, 12vw, 80px);
+            height: clamp(50px, 12vw, 80px);
             border-radius: 50%;
             object-fit: cover;
             object-position: center;
             position: absolute;
-            top: clamp(-40px, -8vw, -60px);
+            top: 2vw; /* Moved down */
             left: 50%;
             transform: translateX(-50%);
             border: 2px solid rgba(255, 255, 255, 0.6);
         }
+        #profileUsername {
+            font-family: 'Sacramento', cursive; /* Attractive font */
+            font-size: 24px; /* Slightly smaller but elegant */
+        }
+        .call-buttons {
+            text-align: center;
+            margin: 1vw 0;
+        }
+        .call-btn, .video-call-btn {
+            margin: 0 1vw;
+            padding: 0.5vw 1vw;
+            font-size: 12px;
+            display: inline-block;
+        }
         .post-dp, .comment-dp {
-            width: clamp(30px, 6vw, 40px);
-            height: clamp(30px, 6vw, 40px);
+            width: clamp(25px, 5vw, 35px);
+            height: clamp(25px, 5vw, 35px);
             border-radius: 50%;
             object-fit: cover;
             object-position: center;
@@ -94,20 +111,20 @@
         }
         .post-content img {
             max-width: 100%;
-            max-height: 40vw;
+            max-height: 35vw;
             object-fit: contain;
             margin-top: 1vw;
         }
         .delete-btn, .like-btn, .comment-btn {
             margin: 0.5vw;
             padding: 0.5vw;
-            font-size: clamp(14px, 2.5vw, 16px);
+            font-size: 12px;
             width: auto;
             display: inline-block;
-            min-width: 30px;
+            min-width: 25px;
         }
         .timestamp {
-            font-size: clamp(10px, 1.5vw, 12px);
+            font-size: 10px; /* Smaller */
             color: #ccc;
         }
         .feed {
@@ -126,30 +143,42 @@
         .comment {
             background: rgba(255, 255, 255, 0.15);
             padding: 1.5vw;
-            margin: 1vw 0 0 clamp(20px, 5vw, 50px);
+            margin: 1vw 0 0 clamp(15px, 4vw, 40px);
             border-radius: 8px;
             display: flex;
             align-items: flex-start;
             border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        #callModal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.2);
+            padding: 20px;
+            border-radius: 10px;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 0 40px rgba(255, 153, 255, 0.4);
+        }
+        #localVideo, #remoteVideo {
+            width: 100%;
+            max-width: 250px; /* Smaller for mobile */
+            margin: 10px;
+            border-radius: 8px;
+            background: rgba(75, 0, 130, 0.3);
         }
         @keyframes cosmicPulse {
             0%, 100% { opacity: 0.25; }
             50% { opacity: 0.35; }
         }
         @media (max-width: 600px) {
-            .app {
-                padding: 4vw;
-            }
-            .post, .comment {
-                flex-direction: column;
-                align-items: stretch;
-            }
-            .post-dp, .comment-dp {
-                margin-bottom: 1vw;
-            }
-            button {
-                padding: 2vw 3vw;
-            }
+            .app { padding: 4vw; }
+            .post, .comment { flex-direction: column; align-items: stretch; }
+            .post-dp, .comment-dp { margin-bottom: 1vw; }
+            button { padding: 2vw 3vw; }
+            #profileUsername { font-size: 20px; }
         }
     </style>
 </head>
@@ -166,13 +195,17 @@
     </div>
 
     <div id="mainContainer" class="app" style="display: none;">
+        <div class="call-buttons">
+            <button id="callBtn" class="call-btn" style="display: none;">📞 Voice Call</button>
+            <button id="videoCallBtn" class="video-call-btn" style="display: none;">🎥 Video Call</button>
+        </div>
         <div class="profile-section">
             <img id="profilePicture" alt="Profile Picture" class="profile-dp">
             <h2 id="profileUsername"></h2>
             <p id="profileBio"></p>
-            <button id="editProfileBtn" class="btn">Edit Profile</button>
-            <button id="logoutBtn" class="btn">Logout</button>
-            <button id="clearDataBtn" class="btn">Clear All Data</button>
+            <button id="editProfileBtn">Edit Profile</button>
+            <button id="logoutBtn">Logout</button>
+            <button id="clearDataBtn">Clear All Data</button>
         </div>
 
         <form id="editProfileForm" style="display: none;">
@@ -191,11 +224,19 @@
         <div id="posts" class="feed"></div>
     </div>
 
+    <div id="callModal" style="display: none;">
+        <h3 id="callStatus">Incoming Call...</h3>
+        <video id="localVideo" autoplay muted playsinline></video>
+        <video id="remoteVideo" autoplay playsinline></video>
+        <button id="acceptCall" style="display: none;">Accept</button>
+        <button id="rejectCall">Reject</button>
+        <button id="endCall" style="display: none;">End Call</button>
+    </div>
+
     <script>
         const supabaseUrl = 'https://rukbvbwjfyktrdvvodir.supabase.co';
         const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ1a2J2YndqZnlrdHJkdnZvZGlyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDE3MDE1NjAsImV4cCI6MjA1NzI3NzU2MH0._A8EPmKwdaGnFhvhiZJUZ3nvkQrKkCfzmiOhO8JC1vc';
         const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
-        console.log('Supabase client initialized:', supabase ? 'Success' : 'Failed');
 
         const users = [
             { id: '566e8b0b-a07a-4442-b18d-2a3ca87f7992', username: 'mango1', password: 'mango1726', bio: '', profile_picture: '' },
@@ -203,6 +244,24 @@
         ];
 
         const placeholderImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAAAXNSR0IArs4c6QAAAJBJREFUOE9jZKAyYCRkZGQgy8DAwMDAwMjAwMjIyMDAwMDAwMjAwMjIyMDAwMDAwMjAwMjIyMDAwMDAwMjAwMjIyMDAwMDAwMjAwMjIyMDAwMDAwMjAwMjIyMDAwMDAwMjAwMjIyMDAwMDAwMjAwMjIyMDAwMDAwMjAwMjIyMDAwMDAwMjAwMjIyMDAwMDAwMjAwMjIyMAAAADs=';
+
+        let localStream;
+        let peerConnection;
+        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        let targetUserId;
+
+        // IST time formatting
+        function formatIST(date) {
+            return new Date(date).toLocaleString('en-US', {
+                timeZone: 'Asia/Kolkata',
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true
+            });
+        }
 
         document.addEventListener('DOMContentLoaded', () => {
             const isFreshLogin = sessionStorage.getItem('justLoggedIn');
@@ -217,164 +276,11 @@
                     document.getElementById('mainContainer').style.display = 'block';
                     loadProfile(loggedInUser);
                     loadFeed();
+                    setupCallButtons(loggedInUser);
                 }
             }
             subscribeToUpdates();
-
-            document.getElementById('loginForm').addEventListener('submit', (e) => {
-                e.preventDefault();
-                const username = document.getElementById('username').value;
-                const password = document.getElementById('password').value;
-                console.log('Login attempt:', { username, password });
-
-                const user = users.find(u => u.username === username && u.password === password);
-                if (user) {
-                    localStorage.setItem('loggedInUser', JSON.stringify(user));
-                    sessionStorage.setItem('justLoggedIn', 'true');
-                    document.getElementById('loginContainer').style.display = 'none';
-                    document.getElementById('mainContainer').style.display = 'block';
-                    loadProfile(user);
-                    loadFeed();
-                } else {
-                    alert('Invalid credentials. Use mango1 or mango2 with password mango1726.');
-                }
-            });
-
-            document.getElementById('logoutBtn').addEventListener('click', () => {
-                localStorage.removeItem('loggedInUser');
-                sessionStorage.removeItem('justLoggedIn');
-                document.getElementById('mainContainer').style.display = 'none';
-                document.getElementById('loginContainer').style.display = 'block';
-                console.log('Logged out');
-            });
-
-            document.getElementById('editProfileBtn').addEventListener('click', () => {
-                const user = JSON.parse(localStorage.getItem('loggedInUser'));
-                document.getElementById('editUsername').value = user.username;
-                document.getElementById('editBio').value = user.bio || '';
-                document.getElementById('editProfileForm').style.display = 'block';
-            });
-
-            document.getElementById('editProfileForm').addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const user = JSON.parse(localStorage.getItem('loggedInUser'));
-                const newUsername = document.getElementById('editUsername').value;
-                const newBio = document.getElementById('editBio').value;
-                const file = document.getElementById('editProfilePic').files[0];
-                let profilePictureUrl = user.profile_picture || placeholderImage;
-
-                if (file) {
-                    const filePath = `${user.id}/${Date.now()}_${file.name}`;
-                    const { error } = await supabase.storage
-                        .from('profile-pics')
-                        .upload(filePath, file, { upsert: true });
-                    if (error) {
-                        console.error('Upload error:', error.message);
-                        alert('Failed to upload profile picture: ' + error.message);
-                    } else {
-                        profilePictureUrl = supabase.storage.from('profile-pics').getPublicUrl(filePath).data.publicUrl;
-                        console.log('Profile pic URL:', profilePictureUrl);
-                    }
-                }
-
-                user.username = newUsername;
-                user.bio = newBio;
-                user.profile_picture = profilePictureUrl;
-                localStorage.setItem('loggedInUser', JSON.stringify(user));
-
-                const { error } = await supabase.from('users').upsert({
-                    id: user.id,
-                    username: newUsername,
-                    bio: newBio,
-                    profile_picture: profilePictureUrl
-                }, { onConflict: 'id' });
-                if (error) {
-                    console.error('Upsert error:', error.message);
-                    alert('Failed to update profile: ' + error.message);
-                }
-
-                loadProfile(user);
-                loadFeed();
-                document.getElementById('editProfileForm').style.display = 'none';
-            });
-
-            document.getElementById('postForm').addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const user = JSON.parse(localStorage.getItem('loggedInUser'));
-                const content = document.getElementById('postContent').value.trim();
-                const file = document.getElementById('postImage').files[0];
-                let imageUrl = null;
-
-                if (!content && !file) {
-                    alert('Please enter some content or upload an image.');
-                    return;
-                }
-
-                if (file) {
-                    const filePath = `${user.id}/${Date.now()}_${file.name}`;
-                    const { error } = await supabase.storage
-                        .from('profile-pics')
-                        .upload(filePath, file, { upsert: true });
-                    if (error) {
-                        console.error('Upload error:', error.message);
-                        alert('Failed to upload image: ' + error.message);
-                    } else {
-                        imageUrl = supabase.storage.from('profile-pics').getPublicUrl(filePath).data.publicUrl;
-                        console.log('Post image URL:', imageUrl);
-                    }
-                }
-
-                const { data, error } = await supabase
-                    .from('posts')
-                    .insert([{ user_id: user.id, content: content || '', image: imageUrl }])
-                    .select();
-                if (error) {
-                    console.error('Post error:', error.message);
-                    alert('Failed to post: ' + error.message);
-                } else {
-                    console.log('Post successful:', data);
-                    document.getElementById('postForm').reset();
-                    loadFeed();
-                }
-            });
-
-            document.getElementById('clearDataBtn').addEventListener('click', async () => {
-                if (confirm('Are you sure you want to clear all data? This cannot be undone.')) {
-                    const { error: likesError } = await supabase.from('likes').delete().match({});
-                    if (likesError) console.error('Delete likes error:', likesError.message);
-
-                    const { error: commentsError } = await supabase.from('comments').delete().match({});
-                    if (commentsError) console.error('Delete comments error:', commentsError.message);
-
-                    const { error: postsError } = await supabase.from('posts').delete().match({});
-                    if (postsError) console.error('Delete posts error:', postsError.message);
-
-                    const { data: files, error: listError } = await supabase.storage.from('profile-pics').list();
-                    if (listError) {
-                        console.error('List files error:', listError.message);
-                    } else if (files && files.length > 0) {
-                        const fileNames = files.map(file => file.name);
-                        const { error: removeError } = await supabase.storage.from('profile-pics').remove(fileNames);
-                        if (removeError) console.error('Remove files error:', removeError.message);
-                    }
-
-                    const user = JSON.parse(localStorage.getItem('loggedInUser'));
-                    user.profile_picture = placeholderImage;
-                    user.bio = '';
-                    localStorage.setItem('loggedInUser', JSON.stringify(user));
-                    const { error: upsertError } = await supabase.from('users').upsert({ 
-                        id: user.id, 
-                        username: user.username, 
-                        bio: '', 
-                        profile_picture: placeholderImage 
-                    }, { onConflict: 'id' });
-                    if (upsertError) console.error('Upsert user error:', upsertError.message);
-
-                    console.log('All data cleared');
-                    loadProfile(user);
-                    loadFeed();
-                }
-            });
+            subscribeToCalls();
         });
 
         async function loadProfile(user) {
@@ -383,16 +289,20 @@
                 .select('username, bio, profile_picture')
                 .eq('id', user.id)
                 .single();
-            if (error && error.code !== 'PGRST116') {
-                console.error('Load profile error:', error.message);
-                alert('Failed to load profile: ' + error.message);
-            }
+            if (error && error.code !== 'PGRST116') console.error('Load profile error:', error.message);
             const profileData = data || user;
             document.getElementById('profileUsername').textContent = profileData.username;
             document.getElementById('profileBio').textContent = profileData.bio || 'No bio yet';
-            const profilePic = document.getElementById('profilePicture');
-            profilePic.src = profileData.profile_picture || placeholderImage;
-            console.log('Profile picture set to:', profilePic.src);
+            document.getElementById('profilePicture').src = profileData.profile_picture || placeholderImage;
+        }
+
+        function setupCallButtons(loggedInUser) {
+            const otherUser = users.find(u => u.id !== loggedInUser.id);
+            if (otherUser) {
+                targetUserId = otherUser.id;
+                document.getElementById('callBtn').style.display = 'inline-block';
+                document.getElementById('videoCallBtn').style.display = 'inline-block';
+            }
         }
 
         async function loadFeed() {
@@ -408,13 +318,7 @@
                     likes(count)
                 `)
                 .order('created_at', { ascending: false });
-            if (error) {
-                console.error('Load feed error:', error.message);
-                alert('Failed to load feed: ' + error.message);
-                return;
-            }
-            console.log('Fetched posts:', data);
-
+            if (error) console.error('Load feed error:', error.message);
             const postsDiv = document.getElementById('posts');
             postsDiv.innerHTML = '';
             const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
@@ -426,11 +330,7 @@
 
             data.forEach(post => {
                 const likeCount = post.likes[0]?.count || 0;
-                const postDate = new Date(post.created_at).toLocaleString('en-US', { 
-                    timeZone: 'Asia/Kolkata',
-                    year: 'numeric', month: 'short', day: 'numeric', 
-                    hour: '2-digit', minute: '2-digit', hour12: true 
-                });
+                const postDate = formatIST(post.created_at);
                 const postDiv = document.createElement('div');
                 postDiv.className = `post ${post.users.username}`;
                 postDiv.innerHTML = `
@@ -444,11 +344,7 @@
                         ${loggedInUser.id === post.user_id ? `<button class="delete-btn" data-post-id="${post.id}">🗑️</button>` : ''}
                         <div class="comments">
                             ${post.comments.map(c => {
-                                const commentDate = new Date(c.created_at).toLocaleString('en-US', { 
-                                    timeZone: 'Asia/Kolkata',
-                                    year: 'numeric', month: 'short', day: 'numeric', 
-                                    hour: '2-digit', minute: '2-digit', hour12: true 
-                                });
+                                const commentDate = formatIST(c.created_at);
                                 return `
                                     <div class="comment">
                                         <img src="${c.users.profile_picture || placeholderImage}" alt="DP" class="comment-dp">
@@ -496,27 +392,140 @@
                     e.preventDefault();
                     const postId = form.getAttribute('data-post-id');
                     const content = form.querySelector('.comment-input').value.trim();
-                    if (!content) {
-                        alert('Please enter a comment.');
-                        return;
-                    }
+                    if (!content) return;
                     await addComment(postId, loggedInUser.id, content);
                     form.reset();
                 });
             });
         }
 
+        document.getElementById('loginForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const user = users.find(u => u.username === username && u.password === password);
+            if (user) {
+                localStorage.setItem('loggedInUser', JSON.stringify(user));
+                sessionStorage.setItem('justLoggedIn', 'true');
+                document.getElementById('loginContainer').style.display = 'none';
+                document.getElementById('mainContainer').style.display = 'block';
+                loadProfile(user);
+                loadFeed();
+                setupCallButtons(user);
+            } else {
+                alert('Invalid credentials. Use mango1 or mango2 with password mango1726.');
+            }
+        });
+
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            localStorage.removeItem('loggedInUser');
+            sessionStorage.removeItem('justLoggedIn');
+            document.getElementById('mainContainer').style.display = 'none';
+            document.getElementById('loginContainer').style.display = 'block';
+        });
+
+        document.getElementById('editProfileBtn').addEventListener('click', () => {
+            const user = JSON.parse(localStorage.getItem('loggedInUser'));
+            document.getElementById('editUsername').value = user.username;
+            document.getElementById('editBio').value = user.bio || '';
+            document.getElementById('editProfileForm').style.display = 'block';
+        });
+
+        document.getElementById('editProfileForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const user = JSON.parse(localStorage.getItem('loggedInUser'));
+            const newUsername = document.getElementById('editUsername').value;
+            const newBio = document.getElementById('editBio').value;
+            const file = document.getElementById('editProfilePic').files[0];
+            let profilePictureUrl = user.profile_picture || placeholderImage;
+
+            if (file) {
+                const filePath = `${user.id}/${Date.now()}_${file.name}`;
+                const { error } = await supabase.storage
+                    .from('profile-pics')
+                    .upload(filePath, file, { upsert: true });
+                if (error) console.error('Upload error:', error.message);
+                else profilePictureUrl = supabase.storage.from('profile-pics').getPublicUrl(filePath).data.publicUrl;
+            }
+
+            user.username = newUsername;
+            user.bio = newBio;
+            user.profile_picture = profilePictureUrl;
+            localStorage.setItem('loggedInUser', JSON.stringify(user));
+
+            const { error } = await supabase.from('users').upsert({
+                id: user.id,
+                username: newUsername,
+                bio: newBio,
+                profile_picture: profilePictureUrl
+            }, { onConflict: 'id' });
+            if (error) console.error('Upsert error:', error.message);
+
+            loadProfile(user);
+            loadFeed();
+            document.getElementById('editProfileForm').style.display = 'none';
+        });
+
+        document.getElementById('postForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const user = JSON.parse(localStorage.getItem('loggedInUser'));
+            const content = document.getElementById('postContent').value.trim();
+            const file = document.getElementById('postImage').files[0];
+            let imageUrl = null;
+
+            if (!content && !file) return;
+
+            if (file) {
+                const filePath = `${user.id}/${Date.now()}_${file.name}`;
+                const { error } = await supabase.storage
+                    .from('profile-pics')
+                    .upload(filePath, file, { upsert: true });
+                if (error) console.error('Upload error:', error.message);
+                else imageUrl = supabase.storage.from('profile-pics').getPublicUrl(filePath).data.publicUrl;
+            }
+
+            const { data, error } = await supabase
+                .from('posts')
+                .insert([{ user_id: user.id, content: content || '', image: imageUrl }])
+                .select();
+            if (error) console.error('Post error:', error.message);
+            else {
+                document.getElementById('postForm').reset();
+                loadFeed();
+            }
+        });
+
+        document.getElementById('clearDataBtn').addEventListener('click', async () => {
+            if (confirm('Are you sure you want to clear all data?')) {
+                await supabase.from('likes').delete().match({});
+                await supabase.from('comments').delete().match({});
+                await supabase.from('posts').delete().match({});
+                const { data: files } = await supabase.storage.from('profile-pics').list();
+                if (files && files.length > 0) {
+                    const fileNames = files.map(file => file.name);
+                    await supabase.storage.from('profile-pics').remove(fileNames);
+                }
+                const user = JSON.parse(localStorage.getItem('loggedInUser'));
+                user.profile_picture = placeholderImage;
+                user.bio = '';
+                localStorage.setItem('loggedInUser', JSON.stringify(user));
+                await supabase.from('users').upsert({ 
+                    id: user.id, 
+                    username: user.username, 
+                    bio: '', 
+                    profile_picture: placeholderImage 
+                }, { onConflict: 'id' });
+                loadProfile(user);
+                loadFeed();
+            }
+        });
+
         async function likePost(postId, userId) {
             const { data, error } = await supabase
                 .from('likes')
                 .insert([{ post_id: postId, user_id: userId }])
                 .select();
-            if (error && error.code !== '23505') {
-                console.error('Like error:', error.message);
-                alert('Failed to like: ' + error.message);
-            } else {
-                console.log('Like added:', data);
-            }
+            if (error && error.code !== '23505') console.error('Like error:', error.message);
             loadFeed();
         }
 
@@ -525,68 +534,24 @@
                 .from('comments')
                 .insert([{ post_id: postId, user_id: userId, content }])
                 .select();
-            if (error) {
-                console.error('Comment error:', error.message);
-                alert('Failed to comment: ' + error.message);
-            } else {
-                console.log('Comment added:', data);
-            }
+            if (error) console.error('Comment error:', error.message);
             loadFeed();
         }
 
         async function deletePost(postId) {
-            // Delete associated likes first
-            const { error: likesError } = await supabase
-                .from('likes')
-                .delete()
-                .eq('post_id', postId);
-            if (likesError) {
-                console.error('Delete likes error:', likesError.message);
-                alert('Failed to delete likes: ' + likesError.message);
-                return;
-            }
-
-            // Then delete associated comments
-            const { error: commentError } = await supabase
-                .from('comments')
-                .delete()
-                .eq('post_id', postId);
-            if (commentError) {
-                console.error('Delete comments error:', commentError.message);
-                alert('Failed to delete comments: ' + commentError.message);
-                return;
-            }
-
-            // Finally delete the post
-            const { data, error } = await supabase
-                .from('posts')
-                .delete()
-                .eq('id', postId);
-            if (error) {
-                console.error('Delete post error:', error.message);
-                alert('Failed to delete post: ' + error.message);
-            } else {
-                console.log('Post deleted:', postId);
-            }
+            await supabase.from('likes').delete().eq('post_id', postId);
+            await supabase.from('comments').delete().eq('post_id', postId);
+            await supabase.from('posts').delete().eq('id', postId);
             loadFeed();
         }
 
         async function deleteComment(commentId) {
-            const { data, error } = await supabase
-                .from('comments')
-                .delete()
-                .eq('id', commentId);
-            if (error) {
-                console.error('Delete comment error:', error.message);
-                alert('Failed to delete comment: ' + error.message);
-            } else {
-                console.log('Comment deleted:', commentId);
-            }
+            await supabase.from('comments').delete().eq('id', commentId);
             loadFeed();
         }
 
         function subscribeToUpdates() {
-            const channel = supabase
+            supabase
                 .channel('public-changes')
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' }, () => loadFeed())
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments' }, () => loadFeed())
@@ -595,6 +560,132 @@
                 .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'comments' }, () => loadFeed())
                 .subscribe((status) => console.log('Subscription status:', status));
         }
+
+        async function startMedia(video = false) {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video });
+                document.getElementById('localVideo').srcObject = localStream;
+            } catch (error) {
+                console.error('Media error:', error.message);
+                alert('Couldn’t access camera/microphone: ' + error.message);
+            }
+        }
+
+        async function callUser(isVideo = false) {
+            const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+            await startMedia(isVideo);
+            peerConnection = new RTCPeerConnection(config);
+
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            document.getElementById('remoteVideo').srcObject = new MediaStream();
+            peerConnection.ontrack = (event) => {
+                event.streams[0].getTracks().forEach(track => {
+                    document.getElementById('remoteVideo').srcObject.addTrack(track);
+                });
+            };
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    supabase.from('calls').insert({
+                        sender_id: loggedInUser.id,
+                        receiver_id: targetUserId,
+                        type: 'ice-candidate',
+                        data: JSON.stringify(event.candidate)
+                    });
+                }
+            };
+
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            await supabase.from('calls').insert({
+                sender_id: loggedInUser.id,
+                receiver_id: targetUserId,
+                type: 'offer',
+                data: JSON.stringify(offer)
+            });
+
+            document.getElementById('callStatus').textContent = `Calling ${users.find(u => u.id === targetUserId).username}...`;
+            document.getElementById('endCall').style.display = 'block';
+            document.getElementById('callModal').style.display = 'block';
+        }
+
+        function subscribeToCalls() {
+            const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+            supabase
+                .channel('calls-channel')
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${loggedInUser.id}` }, async (payload) => {
+                    const { sender_id, type, data } = payload.new;
+                    const senderUsername = users.find(u => u.id === sender_id)?.username;
+
+                    if (type === 'offer') {
+                        document.getElementById('callStatus').textContent = `Incoming call from ${senderUsername} at ${formatIST(new Date())}`;
+                        document.getElementById('acceptCall').style.display = 'block';
+                        document.getElementById('rejectCall').style.display = 'block';
+                        document.getElementById('callModal').style.display = 'block';
+
+                        document.getElementById('acceptCall').onclick = async () => {
+                            await startMedia(true);
+                            peerConnection = new RTCPeerConnection(config);
+                            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+                            document.getElementById('remoteVideo').srcObject = new MediaStream();
+                            peerConnection.ontrack = (event) => {
+                                event.streams[0].getTracks().forEach(track => {
+                                    document.getElementById('remoteVideo').srcObject.addTrack(track);
+                                });
+                            };
+
+                            peerConnection.onicecandidate = (event) => {
+                                if (event.candidate) {
+                                    supabase.from('calls').insert({
+                                        sender_id: loggedInUser.id,
+                                        receiver_id: sender_id,
+                                        type: 'ice-candidate',
+                                        data: JSON.stringify(event.candidate)
+                                    });
+                                }
+                            };
+
+                            const offer = JSON.parse(data);
+                            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                            const answer = await peerConnection.createAnswer();
+                            await peerConnection.setLocalDescription(answer);
+                            await supabase.from('calls').insert({
+                                sender_id: loggedInUser.id,
+                                receiver_id: sender_id,
+                                type: 'answer',
+                                data: JSON.stringify(answer)
+                            });
+
+                            document.getElementById('acceptCall').style.display = 'none';
+                            document.getElementById('rejectCall').style.display = 'none';
+                            document.getElementById('endCall').style.display = 'block';
+                        };
+
+                        document.getElementById('rejectCall').onclick = () => endCall();
+                    } else if (type === 'answer' && peerConnection) {
+                        const answer = JSON.parse(data);
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                    } else if (type === 'ice-candidate' && peerConnection) {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(data)));
+                    }
+                })
+                .subscribe();
+        }
+
+        function endCall() {
+            if (peerConnection) peerConnection.close();
+            if (localStream) localStream.getTracks().forEach(track => track.stop());
+            document.getElementById('callModal').style.display = 'none';
+            document.getElementById('acceptCall').style.display = 'none';
+            document.getElementById('rejectCall').style.display = 'none';
+            document.getElementById('endCall').style.display = 'none';
+            document.getElementById('localVideo').srcObject = null;
+            document.getElementById('remoteVideo').srcObject = null;
+        }
+
+        document.getElementById('callBtn').addEventListener('click', () => callUser(false));
+        document.getElementById('videoCallBtn').addEventListener('click', () => callUser(true));
+        document.getElementById('endCall').addEventListener('click', endCall);
     </script>
 </body>
 </html>
