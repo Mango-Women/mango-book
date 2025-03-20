@@ -151,23 +151,35 @@
         }
         #callModal {
             position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(255, 255, 255, 0.2);
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
             padding: 20px;
-            border-radius: 10px;
             z-index: 1000;
-            backdrop-filter: blur(5px);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            box-shadow: 0 0 40px rgba(255, 153, 255, 0.4);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
         }
         #localVideo, #remoteVideo {
             width: 100%;
-            max-width: 250px;
-            margin: 10px;
+            height: auto;
+            max-width: none;
+            max-height: 45%;
+            margin: 10px 0;
             border-radius: 8px;
             background: rgba(75, 0, 130, 0.3);
+            object-fit: cover;
+        }
+        #callStatus {
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+        #callModal button {
+            margin: 5px;
+            padding: 10px 20px;
         }
         @keyframes cosmicPulse {
             0%, 100% { opacity: 0.25; }
@@ -226,7 +238,7 @@
 
     <div id="callModal" style="display: none;">
         <h3 id="callStatus">Incoming Call...</h3>
-        <video id="localVideo" autoplay muted playsinline></video>
+        <video id="localVideo" autoplay playsinline></video>
         <video id="remoteVideo" autoplay playsinline></video>
         <button id="acceptCall" style="display: none;">Accept</button>
         <button id="rejectCall">Reject</button>
@@ -247,8 +259,14 @@
 
         let localStream;
         let peerConnection;
-        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        const config = { 
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'turn:relay1.experiment.webrtc.org', username: 'test', credential: 'test' } // Added TURN
+            ] 
+        };
         let targetUserId;
+        let callSubscription;
 
         function formatIST(date) {
             return new Date(date).toLocaleString('en-US', {
@@ -271,16 +289,20 @@
             } else {
                 const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
                 if (loggedInUser) {
-                    document.getElementById('loginContainer').style.display = 'none';
-                    document.getElementById('mainContainer').style.display = 'block';
-                    loadProfile(loggedInUser);
-                    loadFeed();
-                    setupCallButtons(loggedInUser);
-                    subscribeToCalls(loggedInUser); // Move subscription here
+                    initUser(loggedInUser);
                 }
             }
-            subscribeToUpdates();
         });
+
+        function initUser(user) {
+            document.getElementById('loginContainer').style.display = 'none';
+            document.getElementById('mainContainer').style.display = 'block';
+            loadProfile(user);
+            loadFeed();
+            setupCallButtons(user);
+            subscribeToUpdates();
+            subscribeToCalls(user);
+        }
 
         async function loadProfile(user) {
             const { data, error } = await supabase
@@ -406,24 +428,19 @@
             if (user) {
                 localStorage.setItem('loggedInUser', JSON.stringify(user));
                 sessionStorage.setItem('justLoggedIn', 'true');
-                document.getElementById('loginContainer').style.display = 'none';
-                document.getElementById('mainContainer').style.display = 'block';
-                loadProfile(user);
-                loadFeed();
-                setupCallButtons(user);
-                subscribeToCalls(user); // Subscribe after login
+                initUser(user);
             } else {
                 alert('Invalid credentials. Use mango1 or mango2 with password mango1726.');
             }
         });
 
         document.getElementById('logoutBtn').addEventListener('click', () => {
+            if (callSubscription) supabase.removeChannel(callSubscription);
             localStorage.removeItem('loggedInUser');
             sessionStorage.removeItem('justLoggedIn');
             document.getElementById('mainContainer').style.display = 'none';
             document.getElementById('loginContainer').style.display = 'block';
-            if (peerConnection) peerConnection.close();
-            if (localStream) localStream.getTracks().forEach(track => track.stop());
+            endCall();
         });
 
         document.getElementById('editProfileBtn').addEventListener('click', () => {
@@ -502,6 +519,7 @@
                 await supabase.from('likes').delete().match({});
                 await supabase.from('comments').delete().match({});
                 await supabase.from('posts').delete().match({});
+                await supabase.from('calls').delete().match({});
                 const { data: files } = await supabase.storage.from('profile-pics').list();
                 if (files && files.length > 0) {
                     const fileNames = files.map(file => file.name);
@@ -553,6 +571,7 @@
         }
 
         function subscribeToUpdates() {
+            supabase.removeAllChannels();
             supabase
                 .channel('public-changes')
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' }, () => loadFeed())
@@ -560,13 +579,14 @@
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'likes' }, () => loadFeed())
                 .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'posts' }, () => loadFeed())
                 .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'comments' }, () => loadFeed())
-                .subscribe((status) => console.log('Subscription status:', status));
+                .subscribe((status) => console.log('Updates subscription status:', status));
         }
 
         async function startMedia(video = false) {
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video });
                 document.getElementById('localVideo').srcObject = localStream;
+                document.getElementById('localVideo').muted = false; // Ensure unmuted
                 return true;
             } catch (error) {
                 console.error('Media error:', error.message);
@@ -583,7 +603,7 @@
 
         async function callUser(isVideo = false) {
             const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-            const mediaSuccess = await startMedia(isVideo);
+            const mediaSuccess = await startMedia(isVideo); // Video false for voice, true for video
             if (!mediaSuccess) return;
 
             peerConnection = new RTCPeerConnection(config);
@@ -617,7 +637,7 @@
 
             document.getElementById('callStatus').textContent = `Calling ${users.find(u => u.id === targetUserId).username}...`;
             document.getElementById('endCall').style.display = 'block';
-            document.getElementById('callModal').style.display = 'block';
+            document.getElementById('callModal').style.display = 'flex';
         }
 
         function subscribeToCalls(loggedInUser) {
@@ -625,8 +645,9 @@
                 console.error('No logged-in user for call subscription');
                 return;
             }
-            supabase
-                .channel('calls-channel')
+            if (callSubscription) supabase.removeChannel(callSubscription);
+            callSubscription = supabase
+                .channel(`calls-channel-${loggedInUser.id}`)
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${loggedInUser.id}` }, async (payload) => {
                     const { sender_id, type, data } = payload.new;
                     const senderUsername = users.find(u => u.id === sender_id)?.username;
@@ -635,10 +656,10 @@
                         document.getElementById('callStatus').textContent = `Incoming call from ${senderUsername} at ${formatIST(new Date())}`;
                         document.getElementById('acceptCall').style.display = 'block';
                         document.getElementById('rejectCall').style.display = 'block';
-                        document.getElementById('callModal').style.display = 'block';
+                        document.getElementById('callModal').style.display = 'flex';
 
                         document.getElementById('acceptCall').onclick = async () => {
-                            const mediaSuccess = await startMedia(true);
+                            const mediaSuccess = await startMedia(true); // Video on for incoming video calls
                             if (!mediaSuccess) return;
 
                             peerConnection = new RTCPeerConnection(config);
@@ -677,7 +698,9 @@
                             document.getElementById('endCall').style.display = 'block';
                         };
 
-                        document.getElementById('rejectCall').onclick = () => endCall();
+                        document.getElementById('rejectCall').onclick = () => {
+                            endCall(true); // Pass isReject flag
+                        };
                     } else if (type === 'answer' && peerConnection) {
                         const answer = JSON.parse(data);
                         await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
@@ -688,22 +711,32 @@
                 .subscribe((status) => console.log('Call subscription status:', status));
         }
 
-        function endCall() {
-            if (peerConnection) peerConnection.close();
-            if (localStream) localStream.getTracks().forEach(track => track.stop());
+        function endCall(isReject = false) {
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
             document.getElementById('callModal').style.display = 'none';
             document.getElementById('acceptCall').style.display = 'none';
             document.getElementById('rejectCall').style.display = 'none';
             document.getElementById('endCall').style.display = 'none';
             document.getElementById('localVideo').srcObject = null;
             document.getElementById('remoteVideo').srcObject = null;
-            peerConnection = null;
-            localStream = null;
+            if (isReject) {
+                document.getElementById('callStatus').textContent = 'Call rejected';
+                setTimeout(() => {
+                    document.getElementById('callStatus').textContent = 'Incoming Call...';
+                }, 2000);
+            }
         }
 
         document.getElementById('callBtn').addEventListener('click', () => callUser(false));
         document.getElementById('videoCallBtn').addEventListener('click', () => callUser(true));
-        document.getElementById('endCall').addEventListener('click', endCall);
+        document.getElementById('endCall').addEventListener('click', () => endCall());
     </script>
 </body>
 </html>
