@@ -7,6 +7,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Sacramento&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.43.4/dist/umd/supabase.min.js"></script>
     <style>
+        /* [Previous styles unchanged] */
         body {
             background: linear-gradient(45deg, #1a0033, #330066, #4d0099);
             min-height: 100vh;
@@ -258,7 +259,7 @@
 
     <div id="callModal">
         <h3 id="callStatus">Call in Progress...</h3>
-        <video id="localVideo" autoplay playsinline></video>
+        <video id="localVideo" autoplay playsinline muted></video>
         <video id="remoteVideo" autoplay playsinline></video>
         <button id="endCall">End Call</button>
     </div>
@@ -281,7 +282,6 @@
         let targetUserId;
         let callSubscription;
         let processedCallIds = new Set();
-        let currentCallType = 'voice'; // Track call type globally
 
         function formatIST(date) {
             return new Date(date).toLocaleString('en-US', {
@@ -599,8 +599,8 @@
                     console.log('Updates subscription status:', status);
                     if (err) console.error('Updates subscription error:', err);
                     if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                        console.warn('Retrying updates subscription...');
-                        setTimeout(subscribeToUpdates, 5000);
+                        console.warn('Retrying updates subscription in 10s...');
+                        setTimeout(subscribeToUpdates, 10000); // Increased delay
                     }
                 });
         }
@@ -612,7 +612,7 @@
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${user.id}` }, async (payload) => {
                     const call = payload.new;
                     if (!processedCallIds.has(call.id)) {
-                        console.log('New call detected via subscription:', call);
+                        console.log('New call detected:', call);
                         if (call.type === 'offer') {
                             showIncomingCallModal(call);
                             processedCallIds.add(call.id);
@@ -629,47 +629,67 @@
                     console.log('Calls subscription status:', status);
                     if (err) console.error('Calls subscription error:', err);
                     if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                        console.warn('Retrying calls subscription...');
-                        setTimeout(() => subscribeToCalls(user), 5000);
+                        console.warn('Retrying calls subscription in 10s...');
+                        setTimeout(() => subscribeToCalls(user), 10000); // Increased delay
                     }
                 });
         }
 
         async function startMedia(isVideo = false) {
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideo });
-                document.getElementById('localVideo').srcObject = localStream;
+                let constraints = { audio: true, video: isVideo };
+                localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                if (!isVideo) {
+                    localStream.getVideoTracks().forEach(track => track.stop());
+                    localStream = new MediaStream(localStream.getAudioTracks());
+                }
+                document.getElementById('localVideo').srcObject = isVideo ? localStream : null;
                 document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
                 document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
                 return true;
             } catch (error) {
                 console.error('Media error:', error.message);
-                if (error.name === 'NotFoundError') {
-                    alert('No camera/microphone found. Check your device.');
+                if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+                    console.warn('No media devices found, attempting audio-only fallback...');
+                    try {
+                        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                        document.getElementById('localVideo').srcObject = null;
+                        document.getElementById('localVideo').style.display = 'none';
+                        document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
+                        return true;
+                    } catch (audioError) {
+                        console.error('Audio-only fallback failed:', audioError.message);
+                        alert('No microphone or camera found. Calls require at least a microphone.');
+                        return false;
+                    }
                 } else if (error.name === 'NotAllowedError') {
                     alert('Permission denied. Please allow mic/camera access.');
+                    return false;
                 } else {
                     alert('Media error: ' + error.message);
+                    return false;
                 }
-                return false;
             }
         }
 
         async function callUser(isVideo = false) {
             const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-            currentCallType = isVideo ? 'video' : 'voice';
             const mediaSuccess = await startMedia(isVideo);
             if (!mediaSuccess) return;
 
             peerConnection = new RTCPeerConnection(config);
-            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            localStream.getTracks().forEach(track => {
+                console.log('Adding local track:', track);
+                peerConnection.addTrack(track, localStream);
+            });
+
             const remoteStream = new MediaStream();
             document.getElementById('remoteVideo').srcObject = remoteStream;
 
             peerConnection.ontrack = (event) => {
-                console.log('Received remote track:', event.track);
+                console.log('Received remote stream:', event.streams[0]);
                 event.streams[0].getTracks().forEach(track => {
-                    console.log('Adding track to remote stream:', track);
+                    console.log('Adding remote track:', track);
                     remoteStream.addTrack(track);
                 });
             };
@@ -683,6 +703,17 @@
                         type: 'ice-candidate',
                         data: JSON.stringify(event.candidate)
                     });
+                }
+            };
+
+            peerConnection.onconnectionstatechange = () => {
+                console.log('Connection state:', peerConnection.connectionState);
+                if (peerConnection.connectionState === 'connected') {
+                    document.getElementById('callStatus').textContent = `Connected with ${users.find(u => u.id === targetUserId).username}`;
+                } else if (peerConnection.connectionState === 'failed') {
+                    console.error('Connection failed');
+                    alert('Call connection failed. Please try again.');
+                    endCall();
                 }
             };
 
@@ -736,33 +767,47 @@
         }
 
         async function handleIncomingCall(call) {
-            // For now, assume video call; ideally, we'd detect call type from offer
-            const isVideo = true; // Temporary assumption; refine later if needed
-            currentCallType = isVideo ? 'video' : 'voice';
+            const isVideo = call.data.includes('m=video'); // Infer from SDP; refine later
             const mediaSuccess = await startMedia(isVideo);
             if (!mediaSuccess) return;
 
             peerConnection = new RTCPeerConnection(config);
-            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            localStream.getTracks().forEach(track => {
+                console.log('Adding local track:', track);
+                peerConnection.addTrack(track, localStream);
+            });
+
             const remoteStream = new MediaStream();
             document.getElementById('remoteVideo').srcObject = remoteStream;
 
             peerConnection.ontrack = (event) => {
-                console.log('Received remote track:', event.track);
+                console.log('Received remote stream:', event.streams[0]);
                 event.streams[0].getTracks().forEach(track => {
-                    console.log('Adding track to remote stream:', track);
+                    console.log('Adding remote track:', track);
                     remoteStream.addTrack(track);
                 });
             };
 
             peerConnection.onicecandidate = (event) => {
                 if (event.candidate) {
+                    console.log('Sending ICE candidate:', event.candidate);
                     supabase.from('calls').insert({
                         sender_id: JSON.parse(localStorage.getItem('loggedInUser')).id,
                         receiver_id: call.sender_id,
                         type: 'ice-candidate',
                         data: JSON.stringify(event.candidate)
                     });
+                }
+            };
+
+            peerConnection.onconnectionstatechange = () => {
+                console.log('Connection state:', peerConnection.connectionState);
+                if (peerConnection.connectionState === 'connected') {
+                    document.getElementById('callStatus').textContent = `Connected with ${users.find(u => u.id === call.sender_id).username}`;
+                } else if (peerConnection.connectionState === 'failed') {
+                    console.error('Connection failed');
+                    alert('Call connection failed. Please try again.');
+                    endCall();
                 }
             };
 
@@ -795,8 +840,8 @@
             document.getElementById('callModal').style.display = 'none';
             document.getElementById('localVideo').srcObject = null;
             document.getElementById('remoteVideo').srcObject = null;
-            document.getElementById('localVideo').style.display = 'block'; // Reset for next call
-            document.getElementById('remoteVideo').style.display = 'block'; // Reset for next call
+            document.getElementById('localVideo').style.display = 'block'; // Reset
+            document.getElementById('remoteVideo').style.display = 'block'; // Reset
         }
 
         document.getElementById('callBtn').addEventListener('click', () => callUser(false));
