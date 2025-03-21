@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mango Social</title>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Sacramento&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.43.4/dist/umd/supabase.min.js"></script>
     <style>
         body {
             background: linear-gradient(45deg, #1a0033, #330066, #4d0099);
@@ -33,7 +33,6 @@
             max-width: 700px;
             border-radius: 20px;
             padding: 3vw;
-            backdrop-filter: blur(5px);
             border: 1px solid rgba(255, 255, 255, 0.3);
             box-shadow: 0 0 40px rgba(255, 153, 255, 0.4);
             margin: 0 auto;
@@ -149,35 +148,49 @@
             align-items: flex-start;
             border: 1px solid rgba(255, 255, 255, 0.3);
         }
-        #callModal {
+        #incomingCallModal {
+            display: none;
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.8);
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
             padding: 20px;
+            border-radius: 10px;
+            z-index: 1001;
+            text-align: center;
+            max-width: 300px;
+            width: 90%;
+        }
+        #callModal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px;
+            border-radius: 10px;
             z-index: 1000;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
+            max-width: 600px;
+            width: 90%;
+            text-align: center;
         }
         #localVideo, #remoteVideo {
             width: 100%;
+            max-width: 280px;
             height: auto;
-            max-width: none;
-            max-height: 45%;
-            margin: 10px 0;
+            margin: 10px auto;
             border-radius: 8px;
             background: rgba(75, 0, 130, 0.3);
             object-fit: cover;
+            display: block;
         }
         #callStatus {
             font-size: 16px;
             margin-bottom: 10px;
         }
-        #callModal button {
+        #callModal button, #incomingCallModal button {
             margin: 5px;
             padding: 10px 20px;
         }
@@ -191,6 +204,7 @@
             .post-dp, .comment-dp { margin-bottom: 1vw; }
             button { padding: 2vw 3vw; }
             #profileUsername { font-size: 20px; }
+            #localVideo, #remoteVideo { max-width: 100%; }
         }
     </style>
 </head>
@@ -236,13 +250,17 @@
         <div id="posts" class="feed"></div>
     </div>
 
-    <div id="callModal" style="display: none;">
-        <h3 id="callStatus">Incoming Call...</h3>
+    <div id="incomingCallModal">
+        <h3 id="incomingCallStatus">Incoming Call...</h3>
+        <button id="acceptIncomingCall">Accept</button>
+        <button id="rejectIncomingCall">Reject</button>
+    </div>
+
+    <div id="callModal">
+        <h3 id="callStatus">Call in Progress...</h3>
         <video id="localVideo" autoplay playsinline></video>
         <video id="remoteVideo" autoplay playsinline></video>
-        <button id="acceptCall" style="display: none;">Accept</button>
-        <button id="rejectCall">Reject</button>
-        <button id="endCall" style="display: none;">End Call</button>
+        <button id="endCall">End Call</button>
     </div>
 
     <script>
@@ -259,14 +277,10 @@
 
         let localStream;
         let peerConnection;
-        const config = { 
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'turn:relay1.experiment.webrtc.org', username: 'test', credential: 'test' } // Added TURN
-            ] 
-        };
+        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
         let targetUserId;
         let callSubscription;
+        let processedCallIds = new Set();
 
         function formatIST(date) {
             return new Date(date).toLocaleString('en-US', {
@@ -302,6 +316,7 @@
             setupCallButtons(user);
             subscribeToUpdates();
             subscribeToCalls(user);
+            setInterval(() => checkPendingCalls(user), 10000);
         }
 
         async function loadProfile(user) {
@@ -579,23 +594,61 @@
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'likes' }, () => loadFeed())
                 .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'posts' }, () => loadFeed())
                 .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'comments' }, () => loadFeed())
-                .subscribe((status) => console.log('Updates subscription status:', status));
+                .subscribe((status, err) => {
+                    console.log('Updates subscription status:', status);
+                    if (err) console.error('Updates subscription error:', err);
+                    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                        console.warn('Retrying updates subscription...');
+                        setTimeout(subscribeToUpdates, 5000);
+                    }
+                });
         }
 
-        async function startMedia(video = false) {
+        function subscribeToCalls(user) {
+            if (callSubscription) supabase.removeChannel(callSubscription);
+            callSubscription = supabase
+                .channel('calls-channel')
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${user.id}` }, async (payload) => {
+                    const call = payload.new;
+                    if (!processedCallIds.has(call.id)) {
+                        console.log('New call detected via subscription:', call);
+                        if (call.type === 'offer') {
+                            showIncomingCallModal(call);
+                            processedCallIds.add(call.id);
+                        } else if (call.type === 'answer' && peerConnection) {
+                            console.log('Received answer:', call.data);
+                            await peerConnection.setRemoteDescription(new RTCSessionDescription(JSON.parse(call.data)));
+                        } else if (call.type === 'ice-candidate' && peerConnection) {
+                            console.log('Received ICE candidate:', call.data);
+                            await peerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(call.data)));
+                        }
+                    }
+                })
+                .subscribe((status, err) => {
+                    console.log('Calls subscription status:', status);
+                    if (err) console.error('Calls subscription error:', err);
+                    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                        console.warn('Retrying calls subscription...');
+                        setTimeout(() => subscribeToCalls(user), 5000);
+                    }
+                });
+        }
+
+        async function startMedia(isVideo = false) {
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video });
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideo });
                 document.getElementById('localVideo').srcObject = localStream;
-                document.getElementById('localVideo').muted = false; // Ensure unmuted
+                document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
+                document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
                 return true;
             } catch (error) {
                 console.error('Media error:', error.message);
                 if (error.name === 'NotFoundError') {
-                    alert('No camera or microphone found. Connect a device to make calls.');
+                    alert('No camera/microphone found. Check your device.');
                 } else if (error.name === 'NotAllowedError') {
-                    alert('Permission denied for camera/microphone. Please allow access.');
+                    alert('Permission denied. Please allow mic/camera access.');
                 } else {
-                    alert('Error accessing camera/microphone: ' + error.message);
+                    alert('Media error: ' + error.message);
                 }
                 return false;
             }
@@ -603,7 +656,79 @@
 
         async function callUser(isVideo = false) {
             const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-            const mediaSuccess = await startMedia(isVideo); // Video false for voice, true for video
+            const mediaSuccess = await startMedia(isVideo);
+            if (!mediaSuccess) return;
+
+            peerConnection = new RTCPeerConnection(config);
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            document.getElementById('remoteVideo').srcObject = new MediaStream();
+            peerConnection.ontrack = (event) => {
+                event.streams[0].getTracks().forEach(track => {
+                    document.getElementById('remoteVideo').srcObject.addTrack(track);
+                });
+            };
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    console.log('Sending ICE candidate:', event.candidate);
+                    supabase.from('calls').insert({
+                        sender_id: loggedInUser.id,
+                        receiver_id: targetUserId,
+                        type: 'ice-candidate',
+                        data: JSON.stringify(event.candidate)
+                    });
+                }
+            };
+
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            console.log('Sending offer:', offer);
+            await supabase.from('calls').insert({
+                sender_id: loggedInUser.id,
+                receiver_id: targetUserId,
+                type: 'offer',
+                data: JSON.stringify(offer)
+            });
+
+            document.getElementById('callStatus').textContent = `Calling ${users.find(u => u.id === targetUserId).username}...`;
+            document.getElementById('callModal').style.display = 'block';
+        }
+
+        async function checkPendingCalls(loggedInUser) {
+            const { data, error } = await supabase
+                .from('calls')
+                .select('*')
+                .eq('receiver_id', loggedInUser.id)
+                .eq('type', 'offer')
+                .order('created_at', { ascending: false })
+                .limit(1);
+            if (error) console.error('Check calls error:', error);
+            if (data && data.length > 0 && !processedCallIds.has(data[0].id)) {
+                console.log('Pending call detected:', data[0]);
+                showIncomingCallModal(data[0]);
+                processedCallIds.add(data[0].id);
+            }
+        }
+
+        function showIncomingCallModal(call) {
+            const senderUsername = users.find(u => u.id === call.sender_id)?.username;
+            document.getElementById('incomingCallStatus').textContent = `Incoming call from ${senderUsername} at ${formatIST(new Date())}`;
+            document.getElementById('incomingCallModal').style.display = 'block';
+
+            document.getElementById('acceptIncomingCall').onclick = async () => {
+                await handleIncomingCall(call);
+                document.getElementById('incomingCallModal').style.display = 'none';
+                await supabase.from('calls').delete().eq('id', call.id);
+            };
+
+            document.getElementById('rejectIncomingCall').onclick = async () => {
+                document.getElementById('incomingCallModal').style.display = 'none';
+                await supabase.from('calls').delete().eq('id', call.id);
+            };
+        }
+
+        async function handleIncomingCall(call) {
+            const mediaSuccess = await startMedia(true); // For now, assume video call; refine later if needed
             if (!mediaSuccess) return;
 
             peerConnection = new RTCPeerConnection(config);
@@ -618,125 +743,46 @@
             peerConnection.onicecandidate = (event) => {
                 if (event.candidate) {
                     supabase.from('calls').insert({
-                        sender_id: loggedInUser.id,
-                        receiver_id: targetUserId,
+                        sender_id: JSON.parse(localStorage.getItem('loggedInUser')).id,
+                        receiver_id: call.sender_id,
                         type: 'ice-candidate',
                         data: JSON.stringify(event.candidate)
                     });
                 }
             };
 
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
+            const offer = JSON.parse(call.data);
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
             await supabase.from('calls').insert({
-                sender_id: loggedInUser.id,
-                receiver_id: targetUserId,
-                type: 'offer',
-                data: JSON.stringify(offer)
+                sender_id: JSON.parse(localStorage.getItem('loggedInUser')).id,
+                receiver_id: call.sender_id,
+                type: 'answer',
+                data: JSON.stringify(answer)
             });
 
-            document.getElementById('callStatus').textContent = `Calling ${users.find(u => u.id === targetUserId).username}...`;
-            document.getElementById('endCall').style.display = 'block';
-            document.getElementById('callModal').style.display = 'flex';
+            document.getElementById('callStatus').textContent = `Connected with ${users.find(u => u.id === call.sender_id).username}`;
+            document.getElementById('callModal').style.display = 'block';
         }
 
-        function subscribeToCalls(loggedInUser) {
-            if (!loggedInUser) {
-                console.error('No logged-in user for call subscription');
-                return;
-            }
-            if (callSubscription) supabase.removeChannel(callSubscription);
-            callSubscription = supabase
-                .channel(`calls-channel-${loggedInUser.id}`)
-                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${loggedInUser.id}` }, async (payload) => {
-                    const { sender_id, type, data } = payload.new;
-                    const senderUsername = users.find(u => u.id === sender_id)?.username;
-
-                    if (type === 'offer') {
-                        document.getElementById('callStatus').textContent = `Incoming call from ${senderUsername} at ${formatIST(new Date())}`;
-                        document.getElementById('acceptCall').style.display = 'block';
-                        document.getElementById('rejectCall').style.display = 'block';
-                        document.getElementById('callModal').style.display = 'flex';
-
-                        document.getElementById('acceptCall').onclick = async () => {
-                            const mediaSuccess = await startMedia(true); // Video on for incoming video calls
-                            if (!mediaSuccess) return;
-
-                            peerConnection = new RTCPeerConnection(config);
-                            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-                            document.getElementById('remoteVideo').srcObject = new MediaStream();
-                            peerConnection.ontrack = (event) => {
-                                event.streams[0].getTracks().forEach(track => {
-                                    document.getElementById('remoteVideo').srcObject.addTrack(track);
-                                });
-                            };
-
-                            peerConnection.onicecandidate = (event) => {
-                                if (event.candidate) {
-                                    supabase.from('calls').insert({
-                                        sender_id: loggedInUser.id,
-                                        receiver_id: sender_id,
-                                        type: 'ice-candidate',
-                                        data: JSON.stringify(event.candidate)
-                                    });
-                                }
-                            };
-
-                            const offer = JSON.parse(data);
-                            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-                            const answer = await peerConnection.createAnswer();
-                            await peerConnection.setLocalDescription(answer);
-                            await supabase.from('calls').insert({
-                                sender_id: loggedInUser.id,
-                                receiver_id: sender_id,
-                                type: 'answer',
-                                data: JSON.stringify(answer)
-                            });
-
-                            document.getElementById('acceptCall').style.display = 'none';
-                            document.getElementById('rejectCall').style.display = 'none';
-                            document.getElementById('endCall').style.display = 'block';
-                        };
-
-                        document.getElementById('rejectCall').onclick = () => {
-                            endCall(true); // Pass isReject flag
-                        };
-                    } else if (type === 'answer' && peerConnection) {
-                        const answer = JSON.parse(data);
-                        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-                    } else if (type === 'ice-candidate' && peerConnection) {
-                        await peerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(data)));
-                    }
-                })
-                .subscribe((status) => console.log('Call subscription status:', status));
-        }
-
-        function endCall(isReject = false) {
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
-            }
+        function endCall() {
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
             }
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
             document.getElementById('callModal').style.display = 'none';
-            document.getElementById('acceptCall').style.display = 'none';
-            document.getElementById('rejectCall').style.display = 'none';
-            document.getElementById('endCall').style.display = 'none';
             document.getElementById('localVideo').srcObject = null;
             document.getElementById('remoteVideo').srcObject = null;
-            if (isReject) {
-                document.getElementById('callStatus').textContent = 'Call rejected';
-                setTimeout(() => {
-                    document.getElementById('callStatus').textContent = 'Incoming Call...';
-                }, 2000);
-            }
         }
 
         document.getElementById('callBtn').addEventListener('click', () => callUser(false));
         document.getElementById('videoCallBtn').addEventListener('click', () => callUser(true));
-        document.getElementById('endCall').addEventListener('click', () => endCall());
+        document.getElementById('endCall').addEventListener('click', endCall);
     </script>
 </body>
 </html>
