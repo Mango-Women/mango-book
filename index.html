@@ -7,7 +7,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Sacramento&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.43.4/dist/umd/supabase.min.js"></script>
     <style>
-        /* [Unchanged CSS from your original code] */
         body {
             background: linear-gradient(45deg, #1a0033, #330066, #4d0099);
             min-height: 100vh;
@@ -259,7 +258,7 @@
 
     <div id="callModal">
         <h3 id="callStatus">Call in Progress...</h3>
-        <video id="localVideo" autoplay playsinline muted></video>
+        <video id="localVideo" autoplay playsinline></video>
         <video id="remoteVideo" autoplay playsinline></video>
         <button id="endCall">End Call</button>
     </div>
@@ -267,9 +266,7 @@
     <script>
         const supabaseUrl = 'https://rukbvbwjfyktrdvvodir.supabase.co';
         const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ1a2J2YndqZnlrdHJkdnZvZGlyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDE3MDE1NjAsImV4cCI6MjA1NzI3NzU2MH0._A8EPmKwdaGnFhvhiZJUZ3nvkQrKkCfzmiOhO8JC1vc';
-        const supabase = window.supabase.createClient(supabaseUrl, supabaseKey, {
-            realtime: { params: { eventsPerSecond: 10 } } // Increase event tolerance
-        });
+        const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
 
         const users = [
             { id: '566e8b0b-a07a-4442-b18d-2a3ca87f7992', username: 'mango1', password: 'mango1726', bio: '', profile_picture: '' },
@@ -305,7 +302,9 @@
                 document.getElementById('mainContainer').style.display = 'none';
             } else {
                 const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-                if (loggedInUser) initUser(loggedInUser);
+                if (loggedInUser) {
+                    initUser(loggedInUser);
+                }
             }
         });
 
@@ -315,9 +314,9 @@
             loadProfile(user);
             loadFeed();
             setupCallButtons(user);
-            subscribeToUpdates(user);
+            subscribeToUpdates();
             subscribeToCalls(user);
-            setInterval(() => checkPendingCalls(user), 5000); // Faster polling
+            setInterval(() => checkPendingCalls(user), 10000);
         }
 
         async function loadProfile(user) {
@@ -586,7 +585,7 @@
             loadFeed();
         }
 
-        function subscribeToUpdates(user) {
+        function subscribeToUpdates() {
             supabase.removeAllChannels();
             supabase
                 .channel('public-changes')
@@ -596,10 +595,11 @@
                 .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'posts' }, () => loadFeed())
                 .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'comments' }, () => loadFeed())
                 .subscribe((status, err) => {
-                    console.log('Updates subscription:', status, err ? err.message : '');
-                    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-                        console.warn('Updates subscription failed, retrying in 2s...');
-                        setTimeout(() => subscribeToUpdates(user), 2000); // Faster retry
+                    console.log('Updates subscription status:', status);
+                    if (err) console.error('Updates subscription error:', err);
+                    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                        console.warn('Retrying updates subscription...');
+                        setTimeout(subscribeToUpdates, 5000);
                     }
                 });
         }
@@ -607,64 +607,50 @@
         function subscribeToCalls(user) {
             if (callSubscription) supabase.removeChannel(callSubscription);
             callSubscription = supabase
-                .channel(`calls-channel-${user.id}`)
+                .channel('calls-channel')
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${user.id}` }, async (payload) => {
                     const call = payload.new;
                     if (!processedCallIds.has(call.id)) {
-                        console.log('Received call:', call.type, call);
-                        processedCallIds.add(call.id);
+                        console.log('New call detected via subscription:', call);
                         if (call.type === 'offer') {
                             showIncomingCallModal(call);
+                            processedCallIds.add(call.id);
                         } else if (call.type === 'answer' && peerConnection) {
-                            console.log('Setting remote answer:', call.data);
+                            console.log('Received answer:', call.data);
                             await peerConnection.setRemoteDescription(new RTCSessionDescription(JSON.parse(call.data)));
                         } else if (call.type === 'ice-candidate' && peerConnection) {
-                            console.log('Adding ICE candidate:', call.data);
+                            console.log('Received ICE candidate:', call.data);
                             await peerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(call.data)));
                         }
                     }
                 })
                 .subscribe((status, err) => {
-                    console.log('Calls subscription:', status, err ? err.message : '');
-                    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-                        console.warn('Calls subscription failed, retrying in 2s...');
-                        setTimeout(() => subscribeToCalls(user), 2000); // Faster retry
+                    console.log('Calls subscription status:', status);
+                    if (err) console.error('Calls subscription error:', err);
+                    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                        console.warn('Retrying calls subscription...');
+                        setTimeout(() => subscribeToCalls(user), 5000);
                     }
                 });
         }
 
         async function startMedia(isVideo = false) {
             try {
-                if (localStream) {
-                    localStream.getTracks().forEach(track => track.stop());
-                    localStream = null;
-                }
-                const constraints = isVideo ? { audio: true, video: true } : { audio: true, video: false };
-                localStream = await navigator.mediaDevices.getUserMedia(constraints);
-                console.log('Local stream acquired:', localStream.getTracks().map(t => `${t.kind}: ${t.enabled}`));
-                const localVideo = document.getElementById('localVideo');
-                localVideo.srcObject = isVideo ? localStream : null;
-                localVideo.style.display = isVideo ? 'block' : 'none';
-                document.getElementById('remoteVideo').srcObject = null;
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideo });
+                document.getElementById('localVideo').srcObject = localStream;
+                document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
                 document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
                 return true;
             } catch (error) {
                 console.error('Media error:', error.message);
-                if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-                    if (isVideo) {
-                        console.warn('No camera, falling back to audio-only...');
-                        return await startMedia(false);
-                    } else {
-                        alert('No microphone found. Voice calls require a microphone.');
-                        return false;
-                    }
+                if (error.name === 'NotFoundError') {
+                    alert('No camera/microphone found. Check your device.');
                 } else if (error.name === 'NotAllowedError') {
                     alert('Permission denied. Please allow mic/camera access.');
-                    return false;
                 } else {
                     alert('Media error: ' + error.message);
-                    return false;
                 }
+                return false;
             }
         }
 
@@ -673,78 +659,39 @@
             const mediaSuccess = await startMedia(isVideo);
             if (!mediaSuccess) return;
 
-            if (peerConnection) endCall(); // Reset any existing connection
             peerConnection = new RTCPeerConnection(config);
-            localStream.getTracks().forEach(track => {
-                console.log('Adding local track:', track.kind, track.id);
-                peerConnection.addTrack(track, localStream);
-            });
-
-            const remoteStream = new MediaStream();
-            document.getElementById('remoteVideo').srcObject = remoteStream;
-
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            document.getElementById('remoteVideo').srcObject = new MediaStream();
             peerConnection.ontrack = (event) => {
-                console.log('Received remote stream:', event.streams[0].id);
                 event.streams[0].getTracks().forEach(track => {
-                    track.enabled = true;
-                    console.log(`Remote ${track.kind} track - id: ${track.id}, muted: ${track.muted}, enabled: ${track.enabled}`);
-                    remoteStream.addTrack(track);
-                    if (track.muted) {
-                        track.onunmute = () => {
-                            console.log(`Remote ${track.kind} unmuted`);
-                            document.getElementById('remoteVideo').srcObject = remoteStream;
-                        };
-                    }
+                    document.getElementById('remoteVideo').srcObject.addTrack(track);
                 });
             };
 
-            peerConnection.onicecandidate = async (event) => {
+            peerConnection.onicecandidate = (event) => {
                 if (event.candidate) {
-                    console.log('Sending ICE candidate:', event.candidate.candidate);
-                    const { error } = await supabase.from('calls').insert({
+                    console.log('Sending ICE candidate:', event.candidate);
+                    supabase.from('calls').insert({
                         sender_id: loggedInUser.id,
                         receiver_id: targetUserId,
                         type: 'ice-candidate',
                         data: JSON.stringify(event.candidate)
                     });
-                    if (error) console.error('ICE send error:', error.message);
-                }
-            };
-
-            peerConnection.onconnectionstatechange = () => {
-                console.log('Connection state:', peerConnection.connectionState);
-                const targetName = users.find(u => u.id === targetUserId).username;
-                if (peerConnection.connectionState === 'connected') {
-                    document.getElementById('callStatus').textContent = `Connected with ${targetName}`;
-                } else if (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'disconnected') {
-                    console.error('Connection failed or disconnected');
-                    document.getElementById('callStatus').textContent = 'Call failed';
-                    setTimeout(endCall, 2000);
-                } else {
-                    document.getElementById('callStatus').textContent = `Calling ${targetName} (${peerConnection.connectionState})...`;
                 }
             };
 
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
-            console.log('Sending offer:', offer.sdp.slice(0, 50) + '...');
-            const { error } = await supabase.from('calls').insert({
+            console.log('Sending offer:', offer);
+            await supabase.from('calls').insert({
                 sender_id: loggedInUser.id,
                 receiver_id: targetUserId,
                 type: 'offer',
                 data: JSON.stringify(offer)
             });
-            if (error) console.error('Offer send error:', error.message);
 
+            document.getElementById('callStatus').textContent = `Calling ${users.find(u => u.id === targetUserId).username}...`;
             document.getElementById('callModal').style.display = 'block';
-
-            // Timeout if no connection after 30s
-            setTimeout(() => {
-                if (peerConnection.connectionState !== 'connected') {
-                    console.error('Call timed out');
-                    endCall();
-                }
-            }, 30000);
         }
 
         async function checkPendingCalls(loggedInUser) {
@@ -755,16 +702,16 @@
                 .eq('type', 'offer')
                 .order('created_at', { ascending: false })
                 .limit(1);
-            if (error) console.error('Check calls error:', error.message);
+            if (error) console.error('Check calls error:', error);
             if (data && data.length > 0 && !processedCallIds.has(data[0].id)) {
-                console.log('Found pending call:', data[0]);
+                console.log('Pending call detected:', data[0]);
                 showIncomingCallModal(data[0]);
                 processedCallIds.add(data[0].id);
             }
         }
 
         function showIncomingCallModal(call) {
-            const senderUsername = users.find(u => u.id === call.sender_id)?.username || 'Unknown';
+            const senderUsername = users.find(u => u.id === call.sender_id)?.username;
             document.getElementById('incomingCallStatus').textContent = `Incoming call from ${senderUsername} at ${formatIST(new Date())}`;
             document.getElementById('incomingCallModal').style.display = 'block';
 
@@ -781,59 +728,26 @@
         }
 
         async function handleIncomingCall(call) {
-            const isVideo = call.data.includes('m=video');
-            const mediaSuccess = await startMedia(isVideo);
+            const mediaSuccess = await startMedia(true); // For now, assume video call; refine later if needed
             if (!mediaSuccess) return;
 
-            if (peerConnection) endCall(); // Reset any existing connection
             peerConnection = new RTCPeerConnection(config);
-            localStream.getTracks().forEach(track => {
-                console.log('Adding local track:', track.kind, track.id);
-                peerConnection.addTrack(track, localStream);
-            });
-
-            const remoteStream = new MediaStream();
-            document.getElementById('remoteVideo').srcObject = remoteStream;
-
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            document.getElementById('remoteVideo').srcObject = new MediaStream();
             peerConnection.ontrack = (event) => {
-                console.log('Received remote stream:', event.streams[0].id);
                 event.streams[0].getTracks().forEach(track => {
-                    track.enabled = true;
-                    console.log(`Remote ${track.kind} track - id: ${track.id}, muted: ${track.muted}, enabled: ${track.enabled}`);
-                    remoteStream.addTrack(track);
-                    if (track.muted) {
-                        track.onunmute = () => {
-                            console.log(`Remote ${track.kind} unmuted`);
-                            document.getElementById('remoteVideo').srcObject = remoteStream;
-                        };
-                    }
+                    document.getElementById('remoteVideo').srcObject.addTrack(track);
                 });
             };
 
-            peerConnection.onicecandidate = async (event) => {
+            peerConnection.onicecandidate = (event) => {
                 if (event.candidate) {
-                    console.log('Sending ICE candidate:', event.candidate.candidate);
-                    const { error } = await supabase.from('calls').insert({
+                    supabase.from('calls').insert({
                         sender_id: JSON.parse(localStorage.getItem('loggedInUser')).id,
                         receiver_id: call.sender_id,
                         type: 'ice-candidate',
                         data: JSON.stringify(event.candidate)
                     });
-                    if (error) console.error('ICE send error:', error.message);
-                }
-            };
-
-            peerConnection.onconnectionstatechange = () => {
-                console.log('Connection state:', peerConnection.connectionState);
-                const senderName = users.find(u => u.id === call.sender_id).username;
-                if (peerConnection.connectionState === 'connected') {
-                    document.getElementById('callStatus').textContent = `Connected with ${senderName}`;
-                } else if (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'disconnected') {
-                    console.error('Connection failed or disconnected');
-                    document.getElementById('callStatus').textContent = 'Call failed';
-                    setTimeout(endCall, 2000);
-                } else {
-                    document.getElementById('callStatus').textContent = `Connecting to ${senderName} (${peerConnection.connectionState})...`;
                 }
             };
 
@@ -841,45 +755,29 @@
             await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
-            console.log('Sending answer:', answer.sdp.slice(0, 50) + '...');
-            const { error } = await supabase.from('calls').insert({
+            await supabase.from('calls').insert({
                 sender_id: JSON.parse(localStorage.getItem('loggedInUser')).id,
                 receiver_id: call.sender_id,
                 type: 'answer',
                 data: JSON.stringify(answer)
             });
-            if (error) console.error('Answer send error:', error.message);
 
+            document.getElementById('callStatus').textContent = `Connected with ${users.find(u => u.id === call.sender_id).username}`;
             document.getElementById('callModal').style.display = 'block';
-
-            // Timeout if no connection after 30s
-            setTimeout(() => {
-                if (peerConnection.connectionState !== 'connected') {
-                    console.error('Call timed out');
-                    endCall();
-                }
-            }, 30000);
         }
 
         function endCall() {
             if (localStream) {
-                localStream.getTracks().forEach(track => {
-                    console.log('Stopping track:', track.kind, track.id);
-                    track.stop();
-                });
+                localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
             }
             if (peerConnection) {
-                console.log('Closing peer connection');
                 peerConnection.close();
                 peerConnection = null;
             }
             document.getElementById('callModal').style.display = 'none';
             document.getElementById('localVideo').srcObject = null;
             document.getElementById('remoteVideo').srcObject = null;
-            document.getElementById('localVideo').style.display = 'block'; // Reset
-            document.getElementById('remoteVideo').style.display = 'block'; // Reset
-            document.getElementById('callStatus').textContent = 'Call in Progress...';
         }
 
         document.getElementById('callBtn').addEventListener('click', () => callUser(false));
