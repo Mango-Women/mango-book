@@ -7,7 +7,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Sacramento&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.43.4/dist/umd/supabase.min.js"></script>
     <style>
-        /* [Previous styles unchanged] */
         body {
             background: linear-gradient(45deg, #1a0033, #330066, #4d0099);
             min-height: 100vh;
@@ -303,9 +302,7 @@
                 document.getElementById('mainContainer').style.display = 'none';
             } else {
                 const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-                if (loggedInUser) {
-                    initUser(loggedInUser);
-                }
+                if (loggedInUser) initUser(loggedInUser);
             }
         });
 
@@ -596,11 +593,11 @@
                 .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'posts' }, () => loadFeed())
                 .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'comments' }, () => loadFeed())
                 .subscribe((status, err) => {
-                    console.log('Updates subscription status:', status);
-                    if (err) console.error('Updates subscription error:', err);
+                    console.log('Updates subscription:', status);
+                    if (err) console.error('Updates error:', err);
                     if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                        console.warn('Retrying updates subscription in 10s...');
-                        setTimeout(subscribeToUpdates, 10000); // Increased delay
+                        console.warn('Retrying updates in 10s...');
+                        setTimeout(subscribeToUpdates, 10000);
                     }
                 });
         }
@@ -612,7 +609,7 @@
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${user.id}` }, async (payload) => {
                     const call = payload.new;
                     if (!processedCallIds.has(call.id)) {
-                        console.log('New call detected:', call);
+                        console.log('New call:', call);
                         if (call.type === 'offer') {
                             showIncomingCallModal(call);
                             processedCallIds.add(call.id);
@@ -620,46 +617,43 @@
                             console.log('Received answer:', call.data);
                             await peerConnection.setRemoteDescription(new RTCSessionDescription(JSON.parse(call.data)));
                         } else if (call.type === 'ice-candidate' && peerConnection) {
-                            console.log('Received ICE candidate:', call.data);
+                            console.log('Received ICE:', call.data);
                             await peerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(call.data)));
                         }
                     }
                 })
                 .subscribe((status, err) => {
-                    console.log('Calls subscription status:', status);
-                    if (err) console.error('Calls subscription error:', err);
+                    console.log('Calls subscription:', status);
+                    if (err) console.error('Calls error:', err);
                     if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                        console.warn('Retrying calls subscription in 10s...');
-                        setTimeout(() => subscribeToCalls(user), 10000); // Increased delay
+                        console.warn('Retrying calls in 10s...');
+                        setTimeout(() => subscribeToCalls(user), 10000);
                     }
                 });
         }
 
         async function startMedia(isVideo = false) {
             try {
-                let constraints = { audio: true, video: isVideo };
-                localStream = await navigator.mediaDevices.getUserMedia(constraints);
-                if (!isVideo) {
-                    localStream.getVideoTracks().forEach(track => track.stop());
-                    localStream = new MediaStream(localStream.getAudioTracks());
+                if (localStream) {
+                    localStream.getTracks().forEach(track => track.stop());
+                    localStream = null;
                 }
-                document.getElementById('localVideo').srcObject = isVideo ? localStream : null;
-                document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
+                const constraints = isVideo ? { audio: true, video: true } : { audio: true, video: false };
+                localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                const localVideo = document.getElementById('localVideo');
+                localVideo.srcObject = isVideo ? localStream : null;
+                localVideo.style.display = isVideo ? 'block' : 'none';
+                document.getElementById('remoteVideo').srcObject = null;
                 document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
                 return true;
             } catch (error) {
                 console.error('Media error:', error.message);
                 if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-                    console.warn('No media devices found, attempting audio-only fallback...');
-                    try {
-                        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-                        document.getElementById('localVideo').srcObject = null;
-                        document.getElementById('localVideo').style.display = 'none';
-                        document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
-                        return true;
-                    } catch (audioError) {
-                        console.error('Audio-only fallback failed:', audioError.message);
-                        alert('No microphone or camera found. Calls require at least a microphone.');
+                    if (isVideo) {
+                        console.warn('No camera, trying audio-only...');
+                        return await startMedia(false);
+                    } else {
+                        alert('No microphone found. Voice calls require a microphone.');
                         return false;
                     }
                 } else if (error.name === 'NotAllowedError') {
@@ -679,7 +673,7 @@
 
             peerConnection = new RTCPeerConnection(config);
             localStream.getTracks().forEach(track => {
-                console.log('Adding local track:', track);
+                console.log('Adding local track:', track.kind);
                 peerConnection.addTrack(track, localStream);
             });
 
@@ -689,8 +683,15 @@
             peerConnection.ontrack = (event) => {
                 console.log('Received remote stream:', event.streams[0]);
                 event.streams[0].getTracks().forEach(track => {
-                    console.log('Adding remote track:', track);
+                    track.enabled = true; // Ensure unmuted
+                    console.log(`Remote ${track.kind} track - muted: ${track.muted}, enabled: ${track.enabled}`);
                     remoteStream.addTrack(track);
+                    if (track.muted) {
+                        track.onunmute = () => {
+                            console.log(`Remote ${track.kind} unmuted`);
+                            document.getElementById('remoteVideo').srcObject = remoteStream;
+                        };
+                    }
                 });
             };
 
@@ -708,12 +709,15 @@
 
             peerConnection.onconnectionstatechange = () => {
                 console.log('Connection state:', peerConnection.connectionState);
+                const targetName = users.find(u => u.id === targetUserId).username;
                 if (peerConnection.connectionState === 'connected') {
-                    document.getElementById('callStatus').textContent = `Connected with ${users.find(u => u.id === targetUserId).username}`;
+                    document.getElementById('callStatus').textContent = `Connected with ${targetName}`;
                 } else if (peerConnection.connectionState === 'failed') {
                     console.error('Connection failed');
-                    alert('Call connection failed. Please try again.');
-                    endCall();
+                    document.getElementById('callStatus').textContent = 'Call failed';
+                    setTimeout(endCall, 2000);
+                } else {
+                    document.getElementById('callStatus').textContent = `Calling ${targetName} (${peerConnection.connectionState})...`;
                 }
             };
 
@@ -727,10 +731,7 @@
                 data: JSON.stringify(offer)
             });
 
-            document.getElementById('callStatus').textContent = `Calling ${users.find(u => u.id === targetUserId).username}...`;
             document.getElementById('callModal').style.display = 'block';
-            document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
-            document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
         }
 
         async function checkPendingCalls(loggedInUser) {
@@ -743,7 +744,7 @@
                 .limit(1);
             if (error) console.error('Check calls error:', error);
             if (data && data.length > 0 && !processedCallIds.has(data[0].id)) {
-                console.log('Pending call detected:', data[0]);
+                console.log('Pending call:', data[0]);
                 showIncomingCallModal(data[0]);
                 processedCallIds.add(data[0].id);
             }
@@ -767,13 +768,13 @@
         }
 
         async function handleIncomingCall(call) {
-            const isVideo = call.data.includes('m=video'); // Infer from SDP; refine later
+            const isVideo = call.data.includes('m=video'); // Infer from SDP
             const mediaSuccess = await startMedia(isVideo);
             if (!mediaSuccess) return;
 
             peerConnection = new RTCPeerConnection(config);
             localStream.getTracks().forEach(track => {
-                console.log('Adding local track:', track);
+                console.log('Adding local track:', track.kind);
                 peerConnection.addTrack(track, localStream);
             });
 
@@ -783,8 +784,15 @@
             peerConnection.ontrack = (event) => {
                 console.log('Received remote stream:', event.streams[0]);
                 event.streams[0].getTracks().forEach(track => {
-                    console.log('Adding remote track:', track);
+                    track.enabled = true; // Ensure unmuted
+                    console.log(`Remote ${track.kind} track - muted: ${track.muted}, enabled: ${track.enabled}`);
                     remoteStream.addTrack(track);
+                    if (track.muted) {
+                        track.onunmute = () => {
+                            console.log(`Remote ${track.kind} unmuted`);
+                            document.getElementById('remoteVideo').srcObject = remoteStream;
+                        };
+                    }
                 });
             };
 
@@ -802,12 +810,15 @@
 
             peerConnection.onconnectionstatechange = () => {
                 console.log('Connection state:', peerConnection.connectionState);
+                const senderName = users.find(u => u.id === call.sender_id).username;
                 if (peerConnection.connectionState === 'connected') {
-                    document.getElementById('callStatus').textContent = `Connected with ${users.find(u => u.id === call.sender_id).username}`;
+                    document.getElementById('callStatus').textContent = `Connected with ${senderName}`;
                 } else if (peerConnection.connectionState === 'failed') {
                     console.error('Connection failed');
-                    alert('Call connection failed. Please try again.');
-                    endCall();
+                    document.getElementById('callStatus').textContent = 'Call failed';
+                    setTimeout(endCall, 2000);
+                } else {
+                    document.getElementById('callStatus').textContent = `Connecting to ${senderName} (${peerConnection.connectionState})...`;
                 }
             };
 
@@ -822,10 +833,7 @@
                 data: JSON.stringify(answer)
             });
 
-            document.getElementById('callStatus').textContent = `Connected with ${users.find(u => u.id === call.sender_id).username}`;
             document.getElementById('callModal').style.display = 'block';
-            document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
-            document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
         }
 
         function endCall() {
@@ -842,6 +850,7 @@
             document.getElementById('remoteVideo').srcObject = null;
             document.getElementById('localVideo').style.display = 'block'; // Reset
             document.getElementById('remoteVideo').style.display = 'block'; // Reset
+            document.getElementById('callStatus').textContent = 'Call in Progress...';
         }
 
         document.getElementById('callBtn').addEventListener('click', () => callUser(false));
