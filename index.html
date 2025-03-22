@@ -281,6 +281,7 @@
         let targetUserId;
         let callSubscription;
         let processedCallIds = new Set();
+        let currentCallType = 'voice'; // Track call type globally
 
         function formatIST(date) {
             return new Date(date).toLocaleString('en-US', {
@@ -656,15 +657,20 @@
 
         async function callUser(isVideo = false) {
             const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+            currentCallType = isVideo ? 'video' : 'voice';
             const mediaSuccess = await startMedia(isVideo);
             if (!mediaSuccess) return;
 
             peerConnection = new RTCPeerConnection(config);
             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-            document.getElementById('remoteVideo').srcObject = new MediaStream();
+            const remoteStream = new MediaStream();
+            document.getElementById('remoteVideo').srcObject = remoteStream;
+
             peerConnection.ontrack = (event) => {
+                console.log('Received remote track:', event.track);
                 event.streams[0].getTracks().forEach(track => {
-                    document.getElementById('remoteVideo').srcObject.addTrack(track);
+                    console.log('Adding track to remote stream:', track);
+                    remoteStream.addTrack(track);
                 });
             };
 
@@ -692,6 +698,8 @@
 
             document.getElementById('callStatus').textContent = `Calling ${users.find(u => u.id === targetUserId).username}...`;
             document.getElementById('callModal').style.display = 'block';
+            document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
+            document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
         }
 
         async function checkPendingCalls(loggedInUser) {
@@ -728,15 +736,22 @@
         }
 
         async function handleIncomingCall(call) {
-            const mediaSuccess = await startMedia(true); // For now, assume video call; refine later if needed
+            // For now, assume video call; ideally, we'd detect call type from offer
+            const isVideo = true; // Temporary assumption; refine later if needed
+            currentCallType = isVideo ? 'video' : 'voice';
+            const mediaSuccess = await startMedia(isVideo);
             if (!mediaSuccess) return;
 
             peerConnection = new RTCPeerConnection(config);
             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-            document.getElementById('remoteVideo').srcObject = new MediaStream();
+            const remoteStream = new MediaStream();
+            document.getElementById('remoteVideo').srcObject = remoteStream;
+
             peerConnection.ontrack = (event) => {
+                console.log('Received remote track:', event.track);
                 event.streams[0].getTracks().forEach(track => {
-                    document.getElementById('remoteVideo').srcObject.addTrack(track);
+                    console.log('Adding track to remote stream:', track);
+                    remoteStream.addTrack(track);
                 });
             };
 
@@ -764,6 +779,8 @@
 
             document.getElementById('callStatus').textContent = `Connected with ${users.find(u => u.id === call.sender_id).username}`;
             document.getElementById('callModal').style.display = 'block';
+            document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
+            document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
         }
 
         function endCall() {
@@ -778,6 +795,8 @@
             document.getElementById('callModal').style.display = 'none';
             document.getElementById('localVideo').srcObject = null;
             document.getElementById('remoteVideo').srcObject = null;
+            document.getElementById('localVideo').style.display = 'block'; // Reset for next call
+            document.getElementById('remoteVideo').style.display = 'block'; // Reset for next call
         }
 
         document.getElementById('callBtn').addEventListener('click', () => callUser(false));
