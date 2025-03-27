@@ -631,10 +631,12 @@
                             processedCallIds.add(call.id);
                         } else if (call.type === 'answer' && peerConnection) {
                             console.log('Received answer:', call.data);
-                            await peerConnection.setRemoteDescription(new RTCSessionDescription(JSON.parse(call.data)));
+                            const answer = typeof call.data === 'string' ? JSON.parse(call.data) : call.data;
+                            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
                         } else if (call.type === 'ice-candidate' && peerConnection) {
                             console.log('Received ICE candidate:', call.data);
-                            await peerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(call.data)));
+                            const candidate = typeof call.data === 'string' ? JSON.parse(call.data) : call.data;
+                            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
                         }
                     }
                 })
@@ -763,7 +765,7 @@
                 } catch (error) {
                     console.error('Error accepting call:', error);
                     alert('Failed to accept call: ' + error.message);
-                    endCall(); // Clean up if call fails
+                    endCall();
                 }
             };
 
@@ -777,8 +779,19 @@
 
         async function handleIncomingCall(call) {
             console.log('Handling incoming call:', call);
-            const offer = JSON.parse(call.data);
-            const isVideo = offer.sdp.includes('m=video'); // Detect if offer includes video
+            console.log('Raw call.data:', call.data);
+
+            // Handle call.data whether it’s a string or object
+            let offer;
+            try {
+                offer = typeof call.data === 'string' ? JSON.parse(call.data) : call.data;
+            } catch (e) {
+                console.error('Failed to parse call.data:', e);
+                throw new Error('Invalid call data format');
+            }
+            console.log('Parsed offer:', offer);
+
+            const isVideo = offer.sdp.includes('m=video');
             currentCallType = isVideo ? 'video' : 'voice';
 
             // Start media
@@ -862,8 +875,8 @@
             document.getElementById('callModal').style.display = 'none';
             document.getElementById('localVideo').srcObject = null;
             document.getElementById('remoteVideo').srcObject = null;
-            document.getElementById('localVideo').style.display = 'block'; // Reset for next call
-            document.getElementById('remoteVideo').style.display = 'block'; // Reset for next call
+            document.getElementById('localVideo').style.display = 'block';
+            document.getElementById('remoteVideo').style.display = 'block';
         }
 
         document.getElementById('callBtn').addEventListener('click', () => callUser(false));
