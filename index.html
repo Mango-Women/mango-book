@@ -279,9 +279,12 @@
         let peerConnection;
         const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
         let targetUserId;
-        let callSubscription;
+        let callSubscription = null;
+        let updatesSubscription = null;
         let processedCallIds = new Set();
-        let currentCallType = 'voice'; // Track call type globally
+        let currentCallType = 'voice';
+        let retryDelayUpdates = 2000;
+        let retryDelayCalls = 2000;
 
         function formatIST(date) {
             return new Date(date).toLocaleString('en-US', {
@@ -317,7 +320,7 @@
             setupCallButtons(user);
             subscribeToUpdates();
             subscribeToCalls(user);
-            setInterval(() => checkPendingCalls(user), 10000);
+            setInterval(() => checkPendingCalls(user), 5000); // Reduced polling interval
         }
 
         async function loadProfile(user) {
@@ -451,6 +454,7 @@
         });
 
         document.getElementById('logoutBtn').addEventListener('click', () => {
+            if (updatesSubscription) supabase.removeChannel(updatesSubscription);
             if (callSubscription) supabase.removeChannel(callSubscription);
             localStorage.removeItem('loggedInUser');
             sessionStorage.removeItem('justLoggedIn');
@@ -587,8 +591,10 @@
         }
 
         function subscribeToUpdates() {
-            supabase.removeAllChannels();
-            supabase
+            if (updatesSubscription) {
+                supabase.removeChannel(updatesSubscription);
+            }
+            updatesSubscription = supabase
                 .channel('public-changes')
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' }, () => loadFeed())
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments' }, () => loadFeed())
@@ -597,16 +603,23 @@
                 .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'comments' }, () => loadFeed())
                 .subscribe((status, err) => {
                     console.log('Updates subscription status:', status);
-                    if (err) console.error('Updates subscription error:', err);
+                    if (err) console.error('Updates subscription error:', err.message, err.details, err.hint);
                     if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                        console.warn('Retrying updates subscription...');
-                        setTimeout(subscribeToUpdates, 5000);
+                        console.warn('Retrying updates subscription in', retryDelayUpdates / 1000, 'seconds...');
+                        setTimeout(() => {
+                            subscribeToUpdates();
+                            retryDelayUpdates = Math.min(retryDelayUpdates * 2, 30000); // Cap at 30 seconds
+                        }, retryDelayUpdates);
+                    } else if (status === 'SUBSCRIBED') {
+                        retryDelayUpdates = 2000; // Reset delay on success
                     }
                 });
         }
 
         function subscribeToCalls(user) {
-            if (callSubscription) supabase.removeChannel(callSubscription);
+            if (callSubscription) {
+                supabase.removeChannel(callSubscription);
+            }
             callSubscription = supabase
                 .channel('calls-channel')
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${user.id}` }, async (payload) => {
@@ -627,10 +640,15 @@
                 })
                 .subscribe((status, err) => {
                     console.log('Calls subscription status:', status);
-                    if (err) console.error('Calls subscription error:', err);
+                    if (err) console.error('Calls subscription error:', err.message, err.details, err.hint);
                     if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                        console.warn('Retrying calls subscription...');
-                        setTimeout(() => subscribeToCalls(user), 5000);
+                        console.warn('Retrying calls subscription in', retryDelayCalls / 1000, 'seconds...');
+                        setTimeout(() => {
+                            subscribeToCalls(user);
+                            retryDelayCalls = Math.min(retryDelayCalls * 2, 30000); // Cap at 30 seconds
+                        }, retryDelayCalls);
+                    } else if (status === 'SUBSCRIBED') {
+                        retryDelayCalls = 2000; // Reset delay on success
                     }
                 });
         }
@@ -641,6 +659,7 @@
                 document.getElementById('localVideo').srcObject = localStream;
                 document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
                 document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
+                console.log('Local stream acquired');
                 return true;
             } catch (error) {
                 console.error('Media error:', error.message);
@@ -710,7 +729,10 @@
                 .eq('type', 'offer')
                 .order('created_at', { ascending: false })
                 .limit(1);
-            if (error) console.error('Check calls error:', error);
+            if (error) {
+                console.error('Check calls error:', error.message);
+                return;
+            }
             if (data && data.length > 0 && !processedCallIds.has(data[0].id)) {
                 console.log('Pending call detected:', data[0]);
                 showIncomingCallModal(data[0]);
@@ -736,8 +758,7 @@
         }
 
         async function handleIncomingCall(call) {
-            // For now, assume video call; ideally, we'd detect call type from offer
-            const isVideo = true; // Temporary assumption; refine later if needed
+            const isVideo = true; // Assume video for now; refine later if needed
             currentCallType = isVideo ? 'video' : 'voice';
             const mediaSuccess = await startMedia(isVideo);
             if (!mediaSuccess) return;
