@@ -320,7 +320,7 @@
             setupCallButtons(user);
             subscribeToUpdates();
             subscribeToCalls(user);
-            setInterval(() => checkPendingCalls(user), 5000); // Reduced polling interval
+            setInterval(() => checkPendingCalls(user), 5000);
         }
 
         async function loadProfile(user) {
@@ -608,10 +608,10 @@
                         console.warn('Retrying updates subscription in', retryDelayUpdates / 1000, 'seconds...');
                         setTimeout(() => {
                             subscribeToUpdates();
-                            retryDelayUpdates = Math.min(retryDelayUpdates * 2, 30000); // Cap at 30 seconds
+                            retryDelayUpdates = Math.min(retryDelayUpdates * 2, 30000);
                         }, retryDelayUpdates);
                     } else if (status === 'SUBSCRIBED') {
-                        retryDelayUpdates = 2000; // Reset delay on success
+                        retryDelayUpdates = 2000;
                     }
                 });
         }
@@ -645,10 +645,10 @@
                         console.warn('Retrying calls subscription in', retryDelayCalls / 1000, 'seconds...');
                         setTimeout(() => {
                             subscribeToCalls(user);
-                            retryDelayCalls = Math.min(retryDelayCalls * 2, 30000); // Cap at 30 seconds
+                            retryDelayCalls = Math.min(retryDelayCalls * 2, 30000);
                         }, retryDelayCalls);
                     } else if (status === 'SUBSCRIBED') {
-                        retryDelayCalls = 2000; // Reset delay on success
+                        retryDelayCalls = 2000;
                     }
                 });
         }
@@ -745,29 +745,59 @@
             document.getElementById('incomingCallStatus').textContent = `Incoming call from ${senderUsername} at ${formatIST(new Date())}`;
             document.getElementById('incomingCallModal').style.display = 'block';
 
+            const acceptBtn = document.getElementById('acceptIncomingCall');
+            const rejectBtn = document.getElementById('rejectIncomingCall');
+
+            // Remove existing listeners to prevent duplicates
+            acceptBtn.replaceWith(acceptBtn.cloneNode(true));
+            rejectBtn.replaceWith(rejectBtn.cloneNode(true));
+
+            // Reattach listeners to fresh elements
             document.getElementById('acceptIncomingCall').onclick = async () => {
-                await handleIncomingCall(call);
-                document.getElementById('incomingCallModal').style.display = 'none';
-                await supabase.from('calls').delete().eq('id', call.id);
+                console.log('Accept button clicked for call:', call.id);
+                try {
+                    await handleIncomingCall(call);
+                    console.log('Call accepted successfully');
+                    document.getElementById('incomingCallModal').style.display = 'none';
+                    await supabase.from('calls').delete().eq('id', call.id);
+                } catch (error) {
+                    console.error('Error accepting call:', error);
+                    alert('Failed to accept call: ' + error.message);
+                    endCall(); // Clean up if call fails
+                }
             };
 
             document.getElementById('rejectIncomingCall').onclick = async () => {
+                console.log('Reject button clicked for call:', call.id);
                 document.getElementById('incomingCallModal').style.display = 'none';
                 await supabase.from('calls').delete().eq('id', call.id);
+                console.log('Call rejected');
             };
         }
 
         async function handleIncomingCall(call) {
-            const isVideo = true; // Assume video for now; refine later if needed
+            console.log('Handling incoming call:', call);
+            const offer = JSON.parse(call.data);
+            const isVideo = offer.sdp.includes('m=video'); // Detect if offer includes video
             currentCallType = isVideo ? 'video' : 'voice';
-            const mediaSuccess = await startMedia(isVideo);
-            if (!mediaSuccess) return;
 
+            // Start media
+            const mediaSuccess = await startMedia(isVideo);
+            if (!mediaSuccess) {
+                console.error('Media setup failed, aborting call');
+                throw new Error('Media setup failed');
+            }
+
+            // Initialize WebRTC peer connection
             peerConnection = new RTCPeerConnection(config);
-            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            localStream.getTracks().forEach(track => {
+                console.log('Adding local track:', track);
+                peerConnection.addTrack(track, localStream);
+            });
             const remoteStream = new MediaStream();
             document.getElementById('remoteVideo').srcObject = remoteStream;
 
+            // Handle incoming tracks
             peerConnection.ontrack = (event) => {
                 console.log('Received remote track:', event.track);
                 event.streams[0].getTracks().forEach(track => {
@@ -776,28 +806,43 @@
                 });
             };
 
+            // Handle ICE candidates
             peerConnection.onicecandidate = (event) => {
                 if (event.candidate) {
+                    console.log('Sending ICE candidate:', event.candidate);
                     supabase.from('calls').insert({
                         sender_id: JSON.parse(localStorage.getItem('loggedInUser')).id,
                         receiver_id: call.sender_id,
                         type: 'ice-candidate',
                         data: JSON.stringify(event.candidate)
-                    });
+                    }).then(() => console.log('ICE candidate sent'))
+                      .catch(err => console.error('ICE candidate send failed:', err));
                 }
             };
 
-            const offer = JSON.parse(call.data);
+            // Set remote description (offer) and create answer
+            console.log('Setting remote description (offer):', offer);
             await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+
             const answer = await peerConnection.createAnswer();
+            console.log('Created answer:', answer);
             await peerConnection.setLocalDescription(answer);
-            await supabase.from('calls').insert({
-                sender_id: JSON.parse(localStorage.getItem('loggedInUser')).id,
+
+            // Send answer to caller
+            const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+            const { error } = await supabase.from('calls').insert({
+                sender_id: loggedInUser.id,
                 receiver_id: call.sender_id,
                 type: 'answer',
                 data: JSON.stringify(answer)
             });
+            if (error) {
+                console.error('Failed to send answer:', error);
+                throw new Error('Failed to send answer');
+            }
+            console.log('Answer sent successfully');
 
+            // Show call modal
             document.getElementById('callStatus').textContent = `Connected with ${users.find(u => u.id === call.sender_id).username}`;
             document.getElementById('callModal').style.display = 'block';
             document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
@@ -805,6 +850,7 @@
         }
 
         function endCall() {
+            console.log('Ending call');
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
