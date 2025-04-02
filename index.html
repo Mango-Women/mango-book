@@ -162,64 +162,37 @@
             max-width: 300px;
             width: 90%;
         }
-       #callModal {
-    display: none;
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background: rgba(0, 0, 0, 0.9);
-    padding: 20px;
-    border-radius: 10px;
-    z-index: 1000;
-    max-width: 90vw; /* Adjusted to take most of the viewport width */
-    max-height: 90vh; /* Adjusted to take most of the viewport height */
-    width: 100%;
-    height: 100%;
-    text-align: center;
-    overflow: hidden; /* Prevent overflow */
-}
-
-      #remoteVideo {
-    width: 100%;
-    height: calc(100% - 40px); /* Full height minus padding and button space */
-    max-width: none; /* Remove max-width restriction */
-    max-height: none; /* Remove max-height restriction */
-    border-radius: 8px;
-    background: rgba(75, 0, 130, 0.3);
-    object-fit: cover;
-    display: block;
-    margin: 0 auto;
-}
-
-#localVideo {
-    position: absolute;
-    bottom: 30px; /* Space from bottom for the button */
-    right: 20px; /* Space from right edge */
-    width: 120px; /* Fixed small width */
-    height: 90px; /* Fixed small height */
-    border-radius: 8px;
-    background: rgba(75, 0, 130, 0.3);
-    object-fit: cover;
-    display: block;
-    border: 2px solid rgba(255, 255, 255, 0.6); /* Optional: Add a border for visibility */
-    z-index: 1001; /* Ensure it stays above remote video */
-}
+        #callModal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px;
+            border-radius: 10px;
+            z-index: 1000;
+            max-width: 600px;
+            width: 90%;
+            text-align: center;
+        }
+        #localVideo, #remoteVideo {
+            width: 100%;
+            max-width: 280px;
+            height: auto;
+            margin: 10px auto;
+            border-radius: 8px;
+            background: rgba(75, 0, 130, 0.3);
+            object-fit: cover;
+            display: block;
+        }
         #callStatus {
             font-size: 16px;
             margin-bottom: 10px;
         }
-
-        #incomingCallModal button {
+        #callModal button, #incomingCallModal button {
             margin: 5px;
             padding: 10px 20px;
-}
-
-        #callModal button {
-            margin: 5px;
-            padding: 10px 20px;
-	    position: relative;
-    	     z-index: 1002; /
         }
         @keyframes cosmicPulse {
             0%, 100% { opacity: 0.25; }
