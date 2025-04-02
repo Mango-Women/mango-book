@@ -165,17 +165,18 @@
         #callModal {
             display: none;
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
             background: rgba(0, 0, 0, 0.9);
             padding: 20px;
+            border-radius: 10px;
             z-index: 1000;
+            max-width: 600px;
+            width: 90%;
             text-align: center;
-            box-sizing: border-box;
         }
-        #remoteVideo {
+ #remoteVideo {
             width: 100%;
             height: 100%;
             object-fit: cover;
@@ -198,25 +199,14 @@
             z-index: 2;
             border: 2px solid rgba(255, 255, 255, 0.6);
         }
+      
         #callStatus {
             font-size: 16px;
-            position: absolute;
-            top: 10px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 2;
-            margin: 0;
+            margin-bottom: 10px;
         }
         #callModal button, #incomingCallModal button {
             margin: 5px;
             padding: 10px 20px;
-        }
-        #endCall {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 2;
         }
         @keyframes cosmicPulse {
             0%, 100% { opacity: 0.25; }
@@ -228,7 +218,7 @@
             .post-dp, .comment-dp { margin-bottom: 1vw; }
             button { padding: 2vw 3vw; }
             #profileUsername { font-size: 20px; }
-            #localVideo { width: 100px; height: 75px; }
+            #localVideo, #remoteVideo { max-width: 100%; }
         }
     </style>
 </head>
@@ -282,7 +272,7 @@
 
     <div id="callModal">
         <h3 id="callStatus">Call in Progress...</h3>
-        <video id="localVideo" autoplay playsinline muted></video>
+        <video id="localVideo" autoplay playsinline></video>
         <video id="remoteVideo" autoplay playsinline></video>
         <button id="endCall">End Call</button>
     </div>
@@ -627,11 +617,13 @@
                 .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'comments' }, () => loadFeed())
                 .subscribe((status, err) => {
                     console.log('Updates subscription status:', status);
-                    if (err) console.error('Updates subscription error:', err.message);
+                    if (err) console.error('Updates subscription error:', err.message, err.details, err.hint);
                     if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                         console.warn('Retrying updates subscription in', retryDelayUpdates / 1000, 'seconds...');
-                        setTimeout(subscribeToUpdates, retryDelayUpdates);
-                        retryDelayUpdates = Math.min(retryDelayUpdates * 2, 30000);
+                        setTimeout(() => {
+                            subscribeToUpdates();
+                            retryDelayUpdates = Math.min(retryDelayUpdates * 2, 30000);
+                        }, retryDelayUpdates);
                     } else if (status === 'SUBSCRIBED') {
                         retryDelayUpdates = 2000;
                     }
@@ -647,28 +639,30 @@
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${user.id}` }, async (payload) => {
                     const call = payload.new;
                     if (!processedCallIds.has(call.id)) {
-                        console.log('New call detected:', call);
-                        processedCallIds.add(call.id);
+                        console.log('New call detected via subscription:', call);
                         if (call.type === 'offer') {
                             showIncomingCallModal(call);
+                            processedCallIds.add(call.id);
                         } else if (call.type === 'answer' && peerConnection) {
                             console.log('Received answer:', call.data);
                             const answer = typeof call.data === 'string' ? JSON.parse(call.data) : call.data;
-                            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer)).catch(e => console.error('Set remote description error:', e));
+                            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
                         } else if (call.type === 'ice-candidate' && peerConnection) {
                             console.log('Received ICE candidate:', call.data);
                             const candidate = typeof call.data === 'string' ? JSON.parse(call.data) : call.data;
-                            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.error('ICE candidate error:', e));
+                            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
                         }
                     }
                 })
                 .subscribe((status, err) => {
                     console.log('Calls subscription status:', status);
-                    if (err) console.error('Calls subscription error:', err.message);
+                    if (err) console.error('Calls subscription error:', err.message, err.details, err.hint);
                     if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                         console.warn('Retrying calls subscription in', retryDelayCalls / 1000, 'seconds...');
-                        setTimeout(() => subscribeToCalls(user), retryDelayCalls);
-                        retryDelayCalls = Math.min(retryDelayCalls * 2, 30000);
+                        setTimeout(() => {
+                            subscribeToCalls(user);
+                            retryDelayCalls = Math.min(retryDelayCalls * 2, 30000);
+                        }, retryDelayCalls);
                     } else if (status === 'SUBSCRIBED') {
                         retryDelayCalls = 2000;
                     }
@@ -677,27 +671,29 @@
 
         async function startMedia(isVideo = false) {
             try {
-                if (localStream) {
-                    localStream.getTracks().forEach(track => track.stop());
-                    localStream = null;
-                }
+                // Enable echo cancellation, noise suppression, and auto gain control
                 localStream = await navigator.mediaDevices.getUserMedia({
                     audio: {
                         echoCancellation: true,
                         noiseSuppression: true,
                         autoGainControl: true
                     },
-                    video: isVideo ? { facingMode: 'user' } : false
+                    video: isVideo
                 });
-                const localVideo = document.getElementById('localVideo');
-                localVideo.srcObject = localStream;
-                localVideo.muted = true; // Prevent echo
-                localVideo.play().catch(e => console.error('Local video play error:', e));
-                console.log('Local stream tracks:', localStream.getTracks());
+                document.getElementById('localVideo').srcObject = localStream;
+                document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
+                document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
+                console.log('Local stream acquired with echo cancellation');
                 return true;
             } catch (error) {
-                console.error('Media error:', error);
-                alert(`Media error: ${error.message} (${error.name})`);
+                console.error('Media error:', error.message);
+                if (error.name === 'NotFoundError') {
+                    alert('No camera/microphone found. Check your device.');
+                } else if (error.name === 'NotAllowedError') {
+                    alert('Permission denied. Please allow mic/camera access.');
+                } else {
+                    alert('Media error: ' + error.message);
+                }
                 return false;
             }
         }
@@ -709,14 +705,9 @@
             if (!mediaSuccess) return;
 
             peerConnection = new RTCPeerConnection(config);
-            localStream.getTracks().forEach(track => {
-                console.log('Adding track to peerConnection:', track);
-                peerConnection.addTrack(track, localStream);
-            });
-
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
             const remoteStream = new MediaStream();
-            const remoteVideo = document.getElementById('remoteVideo');
-            remoteVideo.srcObject = remoteStream;
+            document.getElementById('remoteVideo').srcObject = remoteStream;
 
             peerConnection.ontrack = (event) => {
                 console.log('Received remote track:', event.track);
@@ -724,7 +715,6 @@
                     console.log('Adding track to remote stream:', track);
                     remoteStream.addTrack(track);
                 });
-                remoteVideo.play().catch(e => console.error('Remote video play error:', e));
             };
 
             peerConnection.onicecandidate = (event) => {
@@ -735,7 +725,7 @@
                         receiver_id: targetUserId,
                         type: 'ice-candidate',
                         data: JSON.stringify(event.candidate)
-                    }).catch(e => console.error('ICE insert error:', e));
+                    });
                 }
             };
 
@@ -747,10 +737,12 @@
                 receiver_id: targetUserId,
                 type: 'offer',
                 data: JSON.stringify(offer)
-            }).catch(e => console.error('Offer insert error:', e));
+            });
 
             document.getElementById('callStatus').textContent = `Calling ${users.find(u => u.id === targetUserId).username}...`;
             document.getElementById('callModal').style.display = 'block';
+            document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
+            document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
         }
 
         async function checkPendingCalls(loggedInUser) {
@@ -784,39 +776,56 @@
             rejectBtn.replaceWith(rejectBtn.cloneNode(true));
 
             document.getElementById('acceptIncomingCall').onclick = async () => {
-                console.log('Accepting call:', call.id);
-                await handleIncomingCall(call);
-                document.getElementById('incomingCallModal').style.display = 'none';
-                await supabase.from('calls').delete().eq('id', call.id).catch(e => console.error('Delete call error:', e));
+                console.log('Accept button clicked for call:', call.id);
+                try {
+                    await handleIncomingCall(call);
+                    console.log('Call accepted successfully');
+                    document.getElementById('incomingCallModal').style.display = 'none';
+                    await supabase.from('calls').delete().eq('id', call.id);
+                } catch (error) {
+                    console.error('Error accepting call:', error);
+                    alert('Failed to accept call: ' + error.message);
+                    endCall();
+                }
             };
 
             document.getElementById('rejectIncomingCall').onclick = async () => {
-                console.log('Rejecting call:', call.id);
+                console.log('Reject button clicked for call:', call.id);
                 document.getElementById('incomingCallModal').style.display = 'none';
-                await supabase.from('calls').delete().eq('id', call.id).catch(e => console.error('Delete call error:', e));
+                await supabase.from('calls').delete().eq('id', call.id);
+                console.log('Call rejected');
             };
         }
 
         async function handleIncomingCall(call) {
-            const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-            let offer = typeof call.data === 'string' ? JSON.parse(call.data) : call.data;
-            console.log('Handling incoming call with offer:', offer);
+            console.log('Handling incoming call:', call);
+            console.log('Raw call.data:', call.data);
+
+            let offer;
+            try {
+                offer = typeof call.data === 'string' ? JSON.parse(call.data) : call.data;
+            } catch (e) {
+                console.error('Failed to parse call.data:', e);
+                throw new Error('Invalid call data format');
+            }
+            console.log('Parsed offer:', offer);
 
             const isVideo = offer.sdp.includes('m=video');
             currentCallType = isVideo ? 'video' : 'voice';
 
             const mediaSuccess = await startMedia(isVideo);
-            if (!mediaSuccess) throw new Error('Media setup failed');
+            if (!mediaSuccess) {
+                console.error('Media setup failed, aborting call');
+                throw new Error('Media setup failed');
+            }
 
             peerConnection = new RTCPeerConnection(config);
             localStream.getTracks().forEach(track => {
                 console.log('Adding local track:', track);
                 peerConnection.addTrack(track, localStream);
             });
-
             const remoteStream = new MediaStream();
-            const remoteVideo = document.getElementById('remoteVideo');
-            remoteVideo.srcObject = remoteStream;
+            document.getElementById('remoteVideo').srcObject = remoteStream;
 
             peerConnection.ontrack = (event) => {
                 console.log('Received remote track:', event.track);
@@ -824,35 +833,45 @@
                     console.log('Adding track to remote stream:', track);
                     remoteStream.addTrack(track);
                 });
-                remoteVideo.play().catch(e => console.error('Remote video play error:', e));
             };
 
             peerConnection.onicecandidate = (event) => {
                 if (event.candidate) {
                     console.log('Sending ICE candidate:', event.candidate);
                     supabase.from('calls').insert({
-                        sender_id: loggedInUser.id,
+                        sender_id: JSON.parse(localStorage.getItem('loggedInUser')).id,
                         receiver_id: call.sender_id,
                         type: 'ice-candidate',
                         data: JSON.stringify(event.candidate)
-                    }).catch(e => console.error('ICE insert error:', e));
+                    }).then(() => console.log('ICE candidate sent'))
+                      .catch(err => console.error('ICE candidate send failed:', err));
                 }
             };
 
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer)).catch(e => console.error('Set remote description error:', e));
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            console.log('Sending answer:', answer);
+            console.log('Setting remote description (offer):', offer);
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
 
-            await supabase.from('calls').insert({
+            const answer = await peerConnection.createAnswer();
+            console.log('Created answer:', answer);
+            await peerConnection.setLocalDescription(answer);
+
+            const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+            const { error } = await supabase.from('calls').insert({
                 sender_id: loggedInUser.id,
                 receiver_id: call.sender_id,
                 type: 'answer',
                 data: JSON.stringify(answer)
-            }).catch(e => console.error('Answer insert error:', e));
+            });
+            if (error) {
+                console.error('Failed to send answer:', error);
+                throw new Error('Failed to send answer');
+            }
+            console.log('Answer sent successfully');
 
             document.getElementById('callStatus').textContent = `Connected with ${users.find(u => u.id === call.sender_id).username}`;
             document.getElementById('callModal').style.display = 'block';
+            document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
+            document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
         }
 
         function endCall() {
@@ -868,6 +887,8 @@
             document.getElementById('callModal').style.display = 'none';
             document.getElementById('localVideo').srcObject = null;
             document.getElementById('remoteVideo').srcObject = null;
+            document.getElementById('localVideo').style.display = 'block';
+            document.getElementById('remoteVideo').style.display = 'block';
         }
 
         document.getElementById('callBtn').addEventListener('click', () => callUser(false));
