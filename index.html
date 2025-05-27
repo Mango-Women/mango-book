@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mango Social</title>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Sacramento&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.43.4/dist/umd/supabase.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
     <style>
         body {
             background: linear-gradient(45deg, #1a0033, #330066, #4d0099);
@@ -94,7 +94,7 @@
             text-align: center;
             margin: 1vw 0;
         }
-        .call-btn, .video-call-btn {
+        .call-btn, .video-call-btn, .start-media-btn {
             margin: 0 1vw;
             padding: 0.5vw 1vw;
             font-size: 12px;
@@ -222,6 +222,8 @@
 
     <div id="mainContainer" class="app" style="display: none;">
         <div class="call-buttons">
+            <button id="startVoiceMediaBtn" class="start-media-btn">Start Voice</button>
+            <button id="startVideoMediaBtn" class="start-media-btn">Start Video</button>
             <button id="callBtn" class="call-btn" style="display: none;">📞 Voice Call</button>
             <button id="videoCallBtn" class="video-call-btn" style="display: none;">🎥 Video Call</button>
         </div>
@@ -258,7 +260,7 @@
 
     <div id="callModal">
         <h3 id="callStatus">Call in Progress...</h3>
-        <video id="localVideo" autoplay playsinline></video>
+        <video id="localVideo" autoplay playsinline muted></video>
         <video id="remoteVideo" autoplay playsinline></video>
         <button id="endCall">End Call</button>
     </div>
@@ -283,8 +285,8 @@
         let updatesSubscription = null;
         let processedCallIds = new Set();
         let currentCallType = 'voice';
-        let retryDelayUpdates = 2000;
-        let retryDelayCalls = 2000;
+        let mediaStarted = false;
+        let mediaType = null;
 
         function formatIST(date) {
             return new Date(date).toLocaleString('en-US', {
@@ -299,6 +301,7 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
+            console.log('App loaded at', new Date().toISOString());
             const isFreshLogin = sessionStorage.getItem('justLoggedIn');
             if (!isFreshLogin) {
                 localStorage.removeItem('loggedInUser');
@@ -313,138 +316,129 @@
         });
 
         function initUser(user) {
+            console.log('Initializing user:', user);
             document.getElementById('loginContainer').style.display = 'none';
             document.getElementById('mainContainer').style.display = 'block';
             loadProfile(user);
-            loadFeed();
             setupCallButtons(user);
+            loadFeed();
             subscribeToUpdates();
             subscribeToCalls(user);
-            setInterval(() => checkPendingCalls(user), 5000);
+            setInterval(() => checkPendingCalls(user), 1000);
+            // Clear processedCallIds every 30s to prevent blocking
+            setInterval(() => {
+                console.log('Clearing processedCallIds');
+                processedCallIds.clear();
+            }, 30000);
         }
 
         async function loadProfile(user) {
-            const { data, error } = await supabase
-                .from('users')
-                .select('username, bio, profile_picture')
-                .eq('id', user.id)
-                .single();
-            if (error && error.code !== 'PGRST116') console.error('Load profile error:', error.message);
-            const profileData = data || user;
-            document.getElementById('profileUsername').textContent = profileData.username;
-            document.getElementById('profileBio').textContent = profileData.bio || 'No bio yet';
-            document.getElementById('profilePicture').src = profileData.profile_picture || placeholderImage;
+            try {
+                const { data, error } = await supabase
+                    .from('users')
+                    .select('username, bio, profile_picture')
+                    .eq('id', user.id)
+                    .single();
+                if (error && error.code !== 'PGRST116') {
+                    console.error('Profile error:', error.message);
+                    return;
+                }
+                const profileData = data || user;
+                document.getElementById('profileUsername').textContent = profileData.username;
+                document.getElementById('profileBio').textContent = profileData.bio || 'No bio yet';
+                document.getElementById('profilePicture').src = profileData.profile_picture || placeholderImage;
+            } catch (error) {
+                console.error('Profile load exception:', error.message);
+            }
         }
 
         function setupCallButtons(loggedInUser) {
             const otherUser = users.find(u => u.id !== loggedInUser.id);
             if (otherUser) {
                 targetUserId = otherUser.id;
-                document.getElementById('callBtn').style.display = 'inline-block';
-                document.getElementById('videoCallBtn').style.display = 'inline-block';
+                console.log('Target user:', otherUser);
             }
         }
 
         async function loadFeed() {
-            const { data, error } = await supabase
-                .from('posts')
-                .select(`
-                    id, content, image, created_at, user_id,
-                    users!posts_user_id_fkey(username, profile_picture),
-                    comments(
-                        id, content, created_at, user_id,
-                        users!comments_user_id_fkey(username, profile_picture)
-                    ),
-                    likes(count)
-                `)
-                .order('created_at', { ascending: false });
-            if (error) console.error('Load feed error:', error.message);
-            const postsDiv = document.getElementById('posts');
-            postsDiv.innerHTML = '';
-            const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+            try {
+                const { data, error } = await supabase
+                    .from('posts')
+                    .select(`
+                        id, content, image, created_at, user_id,
+                        users!posts_user_id_fkey(id, username, profile_picture)
+                    `)
+                    .order('created_at', { ascending: false });
+                if (error) {
+                    console.error('Feed error:', error.message);
+                    return;
+                }
+                console.log('Fetched posts:', data);
+                const postsDiv = document.getElementById('posts');
+                postsDiv.innerHTML = '';
+                const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+                console.log('Logged in user:', loggedInUser);
 
-            if (!data || data.length === 0) {
-                postsDiv.innerHTML = '<p>No posts yet.</p>';
-                return;
-            }
+                if (!data || data.length === 0) {
+                    postsDiv.innerHTML = 'No posts yet.';
+                    return;
+                }
 
-            data.forEach(post => {
-                const likeCount = post.likes[0]?.count || 0;
-                const postDate = formatIST(post.created_at);
-                const postDiv = document.createElement('div');
-                postDiv.className = `post ${post.users.username}`;
-                postDiv.innerHTML = `
-                    <img src="${post.users.profile_picture || placeholderImage}" alt="DP" class="post-dp">
-                    <div class="post-content">
-                        <p><strong>${post.users.username}</strong>: ${post.content || '(No text)'}</p>
-                        ${post.image ? `<img src="${post.image}" alt="Post Image">` : ''}
-                        <p class="timestamp">Posted on ${postDate}</p>
-                        <p>Likes: ${likeCount}</p>
-                        <button class="like-btn" data-post-id="${post.id}">❤️</button>
-                        ${loggedInUser.id === post.user_id ? `<button class="delete-btn" data-post-id="${post.id}">🗑️</button>` : ''}
-                        <div class="comments">
-                            ${post.comments.map(c => {
-                                const commentDate = formatIST(c.created_at);
-                                return `
-                                    <div class="comment">
-                                        <img src="${c.users.profile_picture || placeholderImage}" alt="DP" class="comment-dp">
-                                        <div class="comment-content">
-                                            <p><strong>${c.users.username}</strong> commented: ${c.content}</p>
-                                            <p class="timestamp">${commentDate}</p>
-                                            ${loggedInUser.id === c.user_id ? `<button class="delete-btn" data-comment-id="${c.id}">🗑️</button>` : ''}
-                                        </div>
-                                    </div>
-                                `;
-                            }).join('')}
+                data.forEach(post => {
+                    const postDate = formatIST(post.created_at);
+                    const postUsername = post.users?.username || 'Unknown';
+                    const postUserId = post.users?.id || post.user_id;
+                    console.log(`Rendering post ${post.id}: user_id=${post.user_id}, username=${postUsername}`);
+                    const postDiv = document.createElement('div');
+                    postDiv.className = `post ${postUsername}`;
+                    postDiv.innerHTML = `
+                        <img src="${post.users?.profile_picture || placeholderImage}" alt="Post DP" class="post-dp">
+                        <div class="post-content">
+                            <p><strong>${postUsername}</strong>: ${post.content || '(No text)'}</p>
+                            ${post.image ? `<img src="${post.image}" alt="Post Image">` : ''}
+                            <p class="timestamp">Posted on ${postDate}</p>
+                            <button class="like-btn" data-post-id="${post.id}">❤️</button>
+                            ${loggedInUser.id === post.user_id ? `<button class="delete-btn" data-post-id="${post.id}">🗑️</button>` : ''}
+                            <form class="comment-form" data-post-id="${post.id}">
+                                <input type="text" class="comment-input" placeholder="Add a comment..." required>
+                                <button type="submit" class="comment-btn">💬</button>
+                            </form>
                         </div>
-                        <form class="comment-form" data-post-id="${post.id}">
-                            <input type="text" class="comment-input" placeholder="Add a comment..." required>
-                            <button type="submit" class="comment-btn">💬</button>
-                        </form>
-                    </div>
-                `;
-                postsDiv.appendChild(postDiv);
-            });
-
-            document.querySelectorAll('.like-btn').forEach(btn => {
-                btn.addEventListener('click', async () => {
-                    const postId = btn.getAttribute('data-post-id');
-                    await likePost(postId, loggedInUser.id);
+                    `;
+                    postsDiv.appendChild(postDiv);
                 });
-            });
 
-            document.querySelectorAll('.delete-btn[data-post-id]').forEach(btn => {
-                btn.addEventListener('click', async () => {
-                    const postId = btn.getAttribute('data-post-id');
-                    await deletePost(postId);
+                document.querySelectorAll('.like-btn').forEach(btn => {
+                    btn.addEventListener('click', () => likePost(btn.getAttribute('data-post-id'), loggedInUser.id));
                 });
-            });
 
-            document.querySelectorAll('.delete-btn[data-comment-id]').forEach(btn => {
-                btn.addEventListener('click', async () => {
-                    const commentId = btn.getAttribute('data-comment-id');
-                    await deleteComment(commentId);
+                document.querySelectorAll('.delete-btn[data-post-id]').forEach(btn => {
+                    btn.addEventListener('click', () => deletePost(btn.getAttribute('data-post-id')));
                 });
-            });
 
-            document.querySelectorAll('.comment-form').forEach(form => {
-                form.addEventListener('submit', async (e) => {
-                    e.preventDefault();
-                    const postId = form.getAttribute('data-post-id');
-                    const content = form.querySelector('.comment-input').value.trim();
-                    if (!content) return;
-                    await addComment(postId, loggedInUser.id, content);
-                    form.reset();
+                document.querySelectorAll('.comment-form').forEach(form => {
+                    form.addEventListener('submit', async e => {
+                        e.preventDefault();
+                        const postId = form.getAttribute('data-post-id');
+                        const content = form.querySelector('.comment-input').value.trim();
+                        if (content) {
+                            await addComment(postId, loggedInUser.id, content);
+                            form.reset();
+                        }
+                    });
                 });
-            });
+            } catch (error) {
+                console.error('Feed load exception:', error.message);
+            }
         }
 
-        document.getElementById('loginForm').addEventListener('submit', (e) => {
+        document.getElementById('loginForm').addEventListener('submit', e => {
             e.preventDefault();
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
             const user = users.find(u => u.username === username && u.password === password);
             if (user) {
+                console.log('Login successful:', user);
                 localStorage.setItem('loggedInUser', JSON.stringify(user));
                 sessionStorage.setItem('justLoggedIn', 'true');
                 initUser(user);
@@ -454,6 +448,7 @@
         });
 
         document.getElementById('logoutBtn').addEventListener('click', () => {
+            console.log('Logging out');
             if (updatesSubscription) supabase.removeChannel(updatesSubscription);
             if (callSubscription) supabase.removeChannel(callSubscription);
             localStorage.removeItem('loggedInUser');
@@ -470,7 +465,7 @@
             document.getElementById('editProfileForm').style.display = 'block';
         });
 
-        document.getElementById('editProfileForm').addEventListener('submit', async (e) => {
+        document.getElementById('editProfileForm').addEventListener('submit', async e => {
             e.preventDefault();
             const user = JSON.parse(localStorage.getItem('loggedInUser'));
             const newUsername = document.getElementById('editUsername').value;
@@ -478,72 +473,85 @@
             const file = document.getElementById('editProfilePic').files[0];
             let profilePictureUrl = user.profile_picture || placeholderImage;
 
-            if (file) {
-                const filePath = `${user.id}/${Date.now()}_${file.name}`;
-                const { error } = await supabase.storage
-                    .from('profile-pics')
-                    .upload(filePath, file, { upsert: true });
-                if (error) console.error('Upload error:', error.message);
-                else profilePictureUrl = supabase.storage.from('profile-pics').getPublicUrl(filePath).data.publicUrl;
+            try {
+                if (file) {
+                    const filePath = `${user.id}/${Date.now()}_${file.name}`;
+                    const { error } = await supabase.storage
+                        .from('profile-pics')
+                        .upload(filePath, file, { upsert: true });
+                    if (error) throw new Error(`Upload error: ${error.message}`);
+                    profilePictureUrl = supabase.storage.from('profile-pics').getPublicUrl(filePath).data.publicUrl;
+                }
+
+                user.username = newUsername;
+                user.bio = newBio;
+                user.profile_picture = profilePictureUrl;
+                localStorage.setItem('loggedInUser', JSON.stringify(user));
+
+                const { error } = await supabase.from('users').upsert({
+                    id: user.id,
+                    username: newUsername,
+                    bio: newBio,
+                    profile_picture: profilePictureUrl
+                }, { onConflict: 'id' });
+                if (error) throw new Error(`Upsert error: ${error.message}`);
+
+                loadProfile(user);
+                loadFeed();
+                document.getElementById('editProfileForm').style.display = 'none';
+            } catch (error) {
+                console.error('Profile update error:', error.message);
+                alert('Failed to update profile: ' + error.message);
             }
-
-            user.username = newUsername;
-            user.bio = newBio;
-            user.profile_picture = profilePictureUrl;
-            localStorage.setItem('loggedInUser', JSON.stringify(user));
-
-            const { error } = await supabase.from('users').upsert({
-                id: user.id,
-                username: newUsername,
-                bio: newBio,
-                profile_picture: profilePictureUrl
-            }, { onConflict: 'id' });
-            if (error) console.error('Upsert error:', error.message);
-
-            loadProfile(user);
-            loadFeed();
-            document.getElementById('editProfileForm').style.display = 'none';
         });
 
-        document.getElementById('postForm').addEventListener('submit', async (e) => {
+        document.getElementById('postForm').addEventListener('submit', async e => {
             e.preventDefault();
             const user = JSON.parse(localStorage.getItem('loggedInUser'));
             const content = document.getElementById('postContent').value.trim();
             const file = document.getElementById('postImage').files[0];
             let imageUrl = null;
 
-            if (!content && !file) return;
-
-            if (file) {
-                const filePath = `${user.id}/${Date.now()}_${file.name}`;
-                const { error } = await supabase.storage
-                    .from('profile-pics')
-                    .upload(filePath, file, { upsert: true });
-                if (error) console.error('Upload error:', error.message);
-                else imageUrl = supabase.storage.from('profile-pics').getPublicUrl(filePath).data.publicUrl;
+            if (!content && !file) {
+                alert('Post content or image required.');
+                return;
             }
 
-            const { data, error } = await supabase
-                .from('posts')
-                .insert([{ user_id: user.id, content: content || '', image: imageUrl }])
-                .select();
-            if (error) console.error('Post error:', error.message);
-            else {
+            try {
+                console.log('Posting as', user);
+                if (file) {
+                    const filePath = `${user.id}/${Date.now()}_${file.name}`;
+                    const { error } = await supabase.storage
+                        .from('profile-pics')
+                        .upload(filePath, file, { upsert: true });
+                    if (error) throw new Error(`Upload error: ${error.message}`);
+                    imageUrl = supabase.storage.from('profile-pics').getPublicUrl(filePath).data.publicUrl;
+                }
+
+                const { data, error } = await supabase
+                    .from('posts')
+                    .insert([{ user_id: user.id, content: content || '', image: imageUrl }])
+                    .select();
+                if (error) throw new Error(`Post error: ${error.message}`);
+                console.log('Post inserted:', data[0]);
                 document.getElementById('postForm').reset();
                 loadFeed();
+            } catch (error) {
+                console.error('Post error:', error.message);
+                alert('Failed to post: ' + error.message);
             }
         });
 
         document.getElementById('clearDataBtn').addEventListener('click', async () => {
-            if (confirm('Are you sure you want to clear all data?')) {
+            if (!confirm('Are you sure you want to clear all data?')) return;
+            try {
                 await supabase.from('likes').delete().match({});
                 await supabase.from('comments').delete().match({});
                 await supabase.from('posts').delete().match({});
                 await supabase.from('calls').delete().match({});
                 const { data: files } = await supabase.storage.from('profile-pics').list();
                 if (files && files.length > 0) {
-                    const fileNames = files.map(file => file.name);
-                    await supabase.storage.from('profile-pics').remove(fileNames);
+                    await supabase.storage.from('profile-pics').remove(files.map(f => f.name));
                 }
                 const user = JSON.parse(localStorage.getItem('loggedInUser'));
                 user.profile_picture = placeholderImage;
@@ -554,310 +562,311 @@
                     username: user.username, 
                     bio: '', 
                     profile_picture: placeholderImage 
-                }, { onConflict: 'id' });
+                });
                 loadProfile(user);
                 loadFeed();
+            } catch (error) {
+                console.error('Clear data error:', error.message);
+                alert('Failed to clear data: ' + error.message);
             }
         });
 
         async function likePost(postId, userId) {
-            const { data, error } = await supabase
-                .from('likes')
-                .insert([{ post_id: postId, user_id: userId }])
-                .select();
-            if (error && error.code !== '23505') console.error('Like error:', error.message);
-            loadFeed();
+            try {
+                const { data, error } = await supabase
+                    .from('likes')
+                    .insert([{ post_id: postId, user_id: userId }])
+                    .select();
+                if (error && error.code !== '23505') throw new Error(`Like error: ${error.message}`);
+                loadFeed();
+            } catch (error) {
+                console.error('Like error:', error.message);
+            }
         }
 
         async function addComment(postId, userId, content) {
-            const { data, error } = await supabase
-                .from('comments')
-                .insert([{ post_id: postId, user_id: userId, content }])
-                .select();
-            if (error) console.error('Comment error:', error.message);
-            loadFeed();
+            try {
+                const { data, error } = await supabase
+                    .from('comments')
+                    .insert([{ post_id: postId, user_id: userId, content }])
+                    .select();
+                if (error) throw new Error(`Comment error: ${error.message}`);
+                loadFeed();
+            } catch (error) {
+                console.error('Comment error:', error.message);
+            }
         }
 
         async function deletePost(postId) {
-            await supabase.from('likes').delete().eq('post_id', postId);
-            await supabase.from('comments').delete().eq('post_id', postId);
-            await supabase.from('posts').delete().eq('id', postId);
-            loadFeed();
+            try {
+                await supabase.from('likes').delete().eq('post_id', postId);
+                await supabase.from('comments').delete().eq('post_id', postId);
+                await supabase.from('posts').delete().eq('id', postId);
+                loadFeed();
+            } catch (error) {
+                console.error('Delete post error:', error.message);
+            }
         }
 
         async function deleteComment(commentId) {
-            await supabase.from('comments').delete().eq('id', commentId);
-            loadFeed();
-        }
-
-        function subscribeToUpdates() {
-            if (updatesSubscription) {
-                supabase.removeChannel(updatesSubscription);
+            try {
+                await supabase.from('comments').delete().eq('id', commentId);
+                loadFeed();
+            } catch (error) {
+                console.error('Delete comment error:', error.message);
             }
-            updatesSubscription = supabase
-                .channel('public-changes')
-                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' }, () => loadFeed())
-                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments' }, () => loadFeed())
-                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'likes' }, () => loadFeed())
-                .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'posts' }, () => loadFeed())
-                .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'comments' }, () => loadFeed())
-                .subscribe((status, err) => {
-                    console.log('Updates subscription status:', status);
-                    if (err) console.error('Updates subscription error:', err.message, err.details, err.hint);
-                    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                        console.warn('Retrying updates subscription in', retryDelayUpdates / 1000, 'seconds...');
-                        setTimeout(() => {
-                            subscribeToUpdates();
-                            retryDelayUpdates = Math.min(retryDelayUpdates * 2, 30000);
-                        }, retryDelayUpdates);
-                    } else if (status === 'SUBSCRIBED') {
-                        retryDelayUpdates = 2000;
-                    }
-                });
-        }
-
-        function subscribeToCalls(user) {
-            if (callSubscription) {
-                supabase.removeChannel(callSubscription);
-            }
-            callSubscription = supabase
-                .channel('calls-channel')
-                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${user.id}` }, async (payload) => {
-                    const call = payload.new;
-                    if (!processedCallIds.has(call.id)) {
-                        console.log('New call detected via subscription:', call);
-                        if (call.type === 'offer') {
-                            showIncomingCallModal(call);
-                            processedCallIds.add(call.id);
-                        } else if (call.type === 'answer' && peerConnection) {
-                            console.log('Received answer:', call.data);
-                            const answer = typeof call.data === 'string' ? JSON.parse(call.data) : call.data;
-                            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-                        } else if (call.type === 'ice-candidate' && peerConnection) {
-                            console.log('Received ICE candidate:', call.data);
-                            const candidate = typeof call.data === 'string' ? JSON.parse(call.data) : call.data;
-                            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-                        }
-                    }
-                })
-                .subscribe((status, err) => {
-                    console.log('Calls subscription status:', status);
-                    if (err) console.error('Calls subscription error:', err.message, err.details, err.hint);
-                    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                        console.warn('Retrying calls subscription in', retryDelayCalls / 1000, 'seconds...');
-                        setTimeout(() => {
-                            subscribeToCalls(user);
-                            retryDelayCalls = Math.min(retryDelayCalls * 2, 30000);
-                        }, retryDelayCalls);
-                    } else if (status === 'SUBSCRIBED') {
-                        retryDelayCalls = 2000;
-                    }
-                });
         }
 
         async function startMedia(isVideo = false) {
             try {
-                // Enable echo cancellation, noise suppression, and auto gain control
+                if (localStream) {
+                    localStream.getTracks().forEach(track => track.stop());
+                    localStream = null;
+                }
                 localStream = await navigator.mediaDevices.getUserMedia({
                     audio: {
                         echoCancellation: true,
                         noiseSuppression: true,
                         autoGainControl: true
                     },
-                    video: isVideo
+                    video: isVideo ? { width: { ideal: 640 }, height: { ideal: 480 } } : false
                 });
                 document.getElementById('localVideo').srcObject = localStream;
                 document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
                 document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
-                console.log('Local stream acquired with echo cancellation');
+                mediaStarted = true;
+                mediaType = isVideo ? 'video' : 'voice';
+                console.log(`Media started: ${mediaType}`);
+                document.getElementById('callBtn').style.display = mediaType === 'voice' ? 'inline-block' : 'none';
+                document.getElementById('videoCallBtn').style.display = mediaType === 'video' ? 'inline-block' : 'none';
+                document.getElementById('startVoiceMediaBtn').disabled = mediaType === 'voice';
+                document.getElementById('startVideoMediaBtn').disabled = mediaType === 'video';
+                document.getElementById('callStatus').textContent = `${mediaType.charAt(0).toUpperCase() + mediaType.slice(1)} ready.`;
                 return true;
             } catch (error) {
-                console.error('Media error:', error.message);
-                if (error.name === 'NotFoundError') {
-                    alert('No camera/microphone found. Check your device.');
-                } else if (error.name === 'NotAllowedError') {
-                    alert('Permission denied. Please allow mic/camera access.');
-                } else {
-                    alert('Media error: ' + error.message);
-                }
+                console.error('Media error:', error.name, error.message);
+                let message = 'Error accessing media.';
+                if (error.name === 'NotFoundError') message = 'No camera/microphone found.';
+                else if (error.name === 'NotAllowedError') message = 'Permission denied. Allow camera/microphone in browser settings.';
+                else if (error.name === 'SecurityError') message = 'Media requires HTTPS.';
+                else message = `Error: ${error.message}`;
+                document.getElementById('callStatus').textContent = message;
+                alert(message);
+                mediaStarted = false;
+                mediaType = null;
                 return false;
             }
         }
 
         async function callUser(isVideo = false) {
-            const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-            currentCallType = isVideo ? 'video' : 'voice';
-            const mediaSuccess = await startMedia(isVideo);
-            if (!mediaSuccess) return;
-
-            peerConnection = new RTCPeerConnection(config);
-            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-            const remoteStream = new MediaStream();
-            document.getElementById('remoteVideo').srcObject = remoteStream;
-
-            peerConnection.ontrack = (event) => {
-                console.log('Received remote track:', event.track);
-                event.streams[0].getTracks().forEach(track => {
-                    console.log('Adding track to remote stream:', track);
-                    remoteStream.addTrack(track);
-                });
-            };
-
-            peerConnection.onicecandidate = (event) => {
-                if (event.candidate) {
-                    console.log('Sending ICE candidate:', event.candidate);
-                    supabase.from('calls').insert({
-                        sender_id: loggedInUser.id,
-                        receiver_id: targetUserId,
-                        type: 'ice-candidate',
-                        data: JSON.stringify(event.candidate)
-                    });
-                }
-            };
-
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-            console.log('Sending offer:', offer);
-            await supabase.from('calls').insert({
-                sender_id: loggedInUser.id,
-                receiver_id: targetUserId,
-                type: 'offer',
-                data: JSON.stringify(offer)
-            });
-
-            document.getElementById('callStatus').textContent = `Calling ${users.find(u => u.id === targetUserId).username}...`;
-            document.getElementById('callModal').style.display = 'block';
-            document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
-            document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
-        }
-
-        async function checkPendingCalls(loggedInUser) {
-            const { data, error } = await supabase
-                .from('calls')
-                .select('*')
-                .eq('receiver_id', loggedInUser.id)
-                .eq('type', 'offer')
-                .order('created_at', { ascending: false })
-                .limit(1);
-            if (error) {
-                console.error('Check calls error:', error.message);
+            if (!mediaStarted || !localStream) {
+                alert('Please start media first.');
                 return;
             }
-            if (data && data.length > 0 && !processedCallIds.has(data[0].id)) {
-                console.log('Pending call detected:', data[0]);
-                showIncomingCallModal(data[0]);
-                processedCallIds.add(data[0].id);
+            if ((isVideo && mediaType !== 'video') || (!isVideo && mediaType !== 'voice')) {
+                alert(`Please start ${isVideo ? 'video' : 'voice'} media.`);
+                return;
+            }
+            const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+            currentCallType = isVideo ? 'video' : 'voice';
+
+            try {
+                console.log('Initiating call as', loggedInUser);
+                peerConnection = new RTCPeerConnection(config);
+                localStream.getTracks().forEach(track => {
+                    console.log('Adding track:', track.kind);
+                    peerConnection.addTrack(track, localStream);
+                });
+                const remoteStream = new MediaStream();
+                document.getElementById('remoteVideo').srcObject = remoteStream;
+
+                peerConnection.ontrack = event => {
+                    console.log('Received remote track:', event.track.kind);
+                    event.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
+                };
+
+                peerConnection.onicecandidate = event => {
+                    if (event.candidate) {
+                        console.log('Sending ICE candidate');
+                        supabase.from('calls').insert({
+                            sender_id: loggedInUser.id,
+                            receiver_id: targetUserId,
+                            type: 'ice-candidate',
+                            data: JSON.stringify(event.candidate)
+                        }).then(() => console.log('ICE candidate sent'))
+                          .catch(error => console.error('ICE candidate error:', error.message));
+                    }
+                };
+
+                peerConnection.oniceconnectionstatechange = () => {
+                    console.log('ICE state:', peerConnection.iceConnectionState);
+                    if (peerConnection.iceConnectionState === 'failed') {
+                        document.getElementById('callStatus').textContent = 'Connection failed.';
+                        endCall();
+                    }
+                };
+
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                console.log('Inserting offer:', { sender_id: loggedInUser.id, receiver_id: targetUserId, type: currentCallType });
+                const { data, error } = await supabase.from('calls').insert({
+                    sender_id: loggedInUser.id,
+                    receiver_id: targetUserId,
+                    type: 'offer',
+                    data: JSON.stringify(offer)
+                }).select();
+                if (error) throw new Error(`Offer error: ${error.message}`);
+                console.log('Offer inserted:', data[0]);
+                document.getElementById('callStatus').textContent = `Calling ${users.find(u => u.id === targetUserId).username}...`;
+                document.getElementById('callModal').style.display = 'block';
+                document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
+                document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
+            } catch (error) {
+                console.error('Call error:', error.message);
+                document.getElementById('callStatus').textContent = 'Failed to initiate call: ' + error.message;
+                endCall();
+            }
+        }
+
+        async function checkPendingCalls(user) {
+            console.log(`Polling calls for ${user.username} (id: ${user.id})`);
+            try {
+                const { data, error } = await supabase
+                    .from('calls')
+                    .select('*')
+                    .eq('receiver_id', user.id)
+                    .eq('type', 'offer')
+                    .order('created_at', { ascending: false })
+                    .limit(1);
+                if (error) {
+                    console.error('Polling error:', error.message);
+                    return;
+                }
+                console.log('Polling result:', data);
+                if (data && data.length > 0 && !processedCallIds.has(data[0].id)) {
+                    console.log('Found call:', data[0]);
+                    showIncomingCallModal(data[0]);
+                    processedCallIds.add(data[0].id);
+                }
+            } catch (error) {
+                console.error('Polling exception:', error.message);
             }
         }
 
         function showIncomingCallModal(call) {
-            const senderUsername = users.find(u => u.id === call.sender_id)?.username;
-            document.getElementById('incomingCallStatus').textContent = `Incoming call from ${senderUsername} at ${formatIST(new Date())}`;
+            console.log('Showing modal for call:', call);
+            const sender = users.find(u => u.id === call.sender_id);
+            const senderUsername = sender ? sender.username : 'Unknown';
+            const isVideo = typeof call.data === 'string' ? call.data.includes('m=video') : call.data?.sdp?.includes('m=video');
+            document.getElementById('incomingCallStatus').textContent = `Incoming ${isVideo ? 'Video' : 'Voice'} Call from ${senderUsername}`;
             document.getElementById('incomingCallModal').style.display = 'block';
 
             const acceptBtn = document.getElementById('acceptIncomingCall');
             const rejectBtn = document.getElementById('rejectIncomingCall');
+            const newAccept = acceptBtn.cloneNode(true);
+            const newReject = rejectBtn.cloneNode(true);
+            acceptBtn.parentNode.replaceChild(newAccept, acceptBtn);
+            rejectBtn.parentNode.replaceChild(newReject, rejectBtn);
 
-            acceptBtn.replaceWith(acceptBtn.cloneNode(true));
-            rejectBtn.replaceWith(rejectBtn.cloneNode(true));
-
-            document.getElementById('acceptIncomingCall').onclick = async () => {
-                console.log('Accept button clicked for call:', call.id);
+            newAccept.onclick = async () => {
+                console.log('Accepting call:', call.id);
+                const isVideo = typeof call.data === 'string' ? call.data.includes('m=video') : call.data?.sdp?.includes('m=video');
+                if (!mediaStarted || (isVideo && mediaType !== 'video') || (!isVideo && mediaType !== 'voice')) {
+                    console.log('Starting media:', isVideo ? 'video' : 'voice');
+                    const success = await startMedia(isVideo);
+                    if (!success) {
+                        alert(`Failed to start ${isVideo ? 'video' : 'voice'} media.`);
+                        document.getElementById('incomingCallModal').style.display = 'none';
+                        await supabase.from('calls').delete().eq('id', call.id);
+                        return;
+                    }
+                }
                 try {
                     await handleIncomingCall(call);
-                    console.log('Call accepted successfully');
                     document.getElementById('incomingCallModal').style.display = 'none';
                     await supabase.from('calls').delete().eq('id', call.id);
                 } catch (error) {
-                    console.error('Error accepting call:', error);
+                    console.error('Accept error:', error.message);
                     alert('Failed to accept call: ' + error.message);
                     endCall();
                 }
             };
 
-            document.getElementById('rejectIncomingCall').onclick = async () => {
-                console.log('Reject button clicked for call:', call.id);
+            newReject.onclick = async () => {
+                console.log('Rejecting call:', call.id);
                 document.getElementById('incomingCallModal').style.display = 'none';
                 await supabase.from('calls').delete().eq('id', call.id);
-                console.log('Call rejected');
             };
         }
 
         async function handleIncomingCall(call) {
-            console.log('Handling incoming call:', call);
-            console.log('Raw call.data:', call.data);
-
+            console.log('Handling call:', call);
             let offer;
             try {
                 offer = typeof call.data === 'string' ? JSON.parse(call.data) : call.data;
-            } catch (e) {
-                console.error('Failed to parse call.data:', e);
-                throw new Error('Invalid call data format');
+            } catch (error) {
+                console.error('Parse error:', error.message);
+                throw new Error('Invalid call data');
             }
-            console.log('Parsed offer:', offer);
 
             const isVideo = offer.sdp.includes('m=video');
             currentCallType = isVideo ? 'video' : 'voice';
 
-            const mediaSuccess = await startMedia(isVideo);
-            if (!mediaSuccess) {
-                console.error('Media setup failed, aborting call');
-                throw new Error('Media setup failed');
-            }
-
             peerConnection = new RTCPeerConnection(config);
             localStream.getTracks().forEach(track => {
-                console.log('Adding local track:', track);
+                console.log('Adding track:', track.kind);
                 peerConnection.addTrack(track, localStream);
             });
             const remoteStream = new MediaStream();
             document.getElementById('remoteVideo').srcObject = remoteStream;
 
-            peerConnection.ontrack = (event) => {
-                console.log('Received remote track:', event.track);
-                event.streams[0].getTracks().forEach(track => {
-                    console.log('Adding track to remote stream:', track);
-                    remoteStream.addTrack(track);
-                });
+            peerConnection.ontrack = event => {
+                console.log('Received remote track:', event.track.kind);
+                event.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
             };
 
-            peerConnection.onicecandidate = (event) => {
+            peerConnection.onicecandidate = event => {
                 if (event.candidate) {
-                    console.log('Sending ICE candidate:', event.candidate);
+                    console.log('Sending ICE candidate');
                     supabase.from('calls').insert({
                         sender_id: JSON.parse(localStorage.getItem('loggedInUser')).id,
                         receiver_id: call.sender_id,
                         type: 'ice-candidate',
                         data: JSON.stringify(event.candidate)
                     }).then(() => console.log('ICE candidate sent'))
-                      .catch(err => console.error('ICE candidate send failed:', err));
+                      .catch(error => console.error('ICE candidate error:', error.message));
                 }
             };
 
-            console.log('Setting remote description (offer):', offer);
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+            peerConnection.oniceconnectionstatechange = () => {
+                console.log('ICE state:', peerConnection.iceConnectionState);
+                if (peerConnection.iceConnectionState === 'failed') {
+                    document.getElementById('callStatus').textContent = 'Connection failed.';
+                    endCall();
+                }
+            };
 
-            const answer = await peerConnection.createAnswer();
-            console.log('Created answer:', answer);
-            await peerConnection.setLocalDescription(answer);
-
-            const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-            const { error } = await supabase.from('calls').insert({
-                sender_id: loggedInUser.id,
-                receiver_id: call.sender_id,
-                type: 'answer',
-                data: JSON.stringify(answer)
-            });
-            if (error) {
-                console.error('Failed to send answer:', error);
-                throw new Error('Failed to send answer');
+            try {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+                const { error } = await supabase.from('calls').insert({
+                    sender_id: loggedInUser.id,
+                    receiver_id: call.sender_id,
+                    type: 'answer',
+                    data: JSON.stringify(answer)
+                });
+                if (error) throw new Error(`Answer error: ${error.message}`);
+                console.log('Answer sent');
+                document.getElementById('callStatus').textContent = `Connected with ${users.find(u => u.id === call.sender_id).username}`;
+                document.getElementById('callModal').style.display = 'block';
+                document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
+                document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
+            } catch (error) {
+                console.error('Handle call error:', error.message);
+                throw error;
             }
-            console.log('Answer sent successfully');
-
-            document.getElementById('callStatus').textContent = `Connected with ${users.find(u => u.id === call.sender_id).username}`;
-            document.getElementById('callModal').style.display = 'block';
-            document.getElementById('localVideo').style.display = isVideo ? 'block' : 'none';
-            document.getElementById('remoteVideo').style.display = isVideo ? 'block' : 'none';
         }
 
         function endCall() {
@@ -871,12 +880,80 @@
                 peerConnection = null;
             }
             document.getElementById('callModal').style.display = 'none';
+            document.getElementById('incomingCallModal').style.display = 'none';
             document.getElementById('localVideo').srcObject = null;
             document.getElementById('remoteVideo').srcObject = null;
-            document.getElementById('localVideo').style.display = 'block';
-            document.getElementById('remoteVideo').style.display = 'block';
+            document.getElementById('localVideo').style.display = '';
+            document.getElementById('remoteVideo').style.display = 'none';
+            mediaStarted = false;
+            mediaType = null;
+            document.getElementById('startVoiceMediaBtn').disabled = false;
+            document.getElementById('startVideoMediaBtn').disabled = false;
+            document.getElementById('callBtn').style.display = 'none';
+            document.getElementById('videoCallBtn').style.display = 'none';
+            document.getElementById('callStatus').innerText = 'Call ended';
         }
 
+        function subscribeToUpdates() {
+            if (updatesSubscription) supabase.removeChannel(updatesSubscription);
+            updatesSubscription = supabase
+                .channel('public_updates')
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' }, () => {
+                    console.log('New post detected');
+                    loadFeed();
+                })
+                .subscribe((status, error) => {
+                    console.log('Updates subscription:', status);
+                    if (error) console.error('Updates error:', error.message);
+                });
+        }
+
+        function subscribeToCalls(user) {
+            if (callSubscription) supabase.removeChannel(callSubscription);
+            callSubscription = supabase
+                .channel('calls')
+                .on('postgres_changes', { 
+                    event: 'INSERT', 
+                    schema: 'public', 
+                    table: 'calls', 
+                    filter: `receiver_id=eq.${user.id}`
+                }, payload => {
+                    const call = payload.new;
+                    console.log('New call received:', call);
+                    if (!processedCallIds.has(call.id)) {
+                        if (call.type === 'offer') {
+                            console.log('Processing offer:', call);
+                            showIncomingCallModal(call);
+                            processedCallIds.add(call.id);
+                        } else if (call.type === 'answer' && peerConnection) {
+                            console.log('Received answer:', call.data);
+                            try {
+                                const answer = typeof call.data === 'string' ? JSON.parse(call.data) : call.data;
+                                peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                                console.log('Answer applied');
+                            } catch (error) {
+                                console.error('Answer error:', error.message);
+                            }
+                        } else if (call.type === 'ice-candidate' && peerConnection) {
+                            console.log('Received ICE candidate:', call.data);
+                            try {
+                                const candidate = typeof call.data === 'string' ? JSON.parse(call.data) : call.data;
+                                peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                                console.log('ICE candidate applied');
+                            } catch (error) {
+                                console.error('ICE candidate error:', error.message);
+                            }
+                        }
+                    }
+                })
+                .subscribe((status, error) => {
+                    console.log('Calls subscription:', status);
+                    if (error) console.error('Calls error:', error);
+                });
+        }
+
+        document.getElementById('startVoiceMediaBtn').addEventListener('click', () => startMedia(false));
+        document.getElementById('startVideoMediaBtn').addEventListener('click', () => startMedia(true));
         document.getElementById('callBtn').addEventListener('click', () => callUser(false));
         document.getElementById('videoCallBtn').addEventListener('click', () => callUser(true));
         document.getElementById('endCall').addEventListener('click', endCall);
